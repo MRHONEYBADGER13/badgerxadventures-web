@@ -290,6 +290,19 @@ def uploaded_file(name):
     return send_from_directory(UPLOAD_DIR, name)
 
 
+@app.route("/.well-known/assetlinks.json")
+def asset_links():
+    """Proves this website and the Android (TWA) app are the same publisher,
+    so Chrome hides its address bar inside the app and it feels native. Empty
+    until you package the app (e.g. with PWABuilder) -- paste what it gives
+    you into well_known/assetlinks.json and redeploy."""
+    folder = os.path.join(os.path.dirname(__file__), "well_known")
+    path = os.path.join(folder, "assetlinks.json")
+    if not os.path.exists(path):
+        return jsonify([])
+    return send_from_directory(folder, "assetlinks.json")
+
+
 # ---------- public API ----------
 
 @app.route("/api/pins")
