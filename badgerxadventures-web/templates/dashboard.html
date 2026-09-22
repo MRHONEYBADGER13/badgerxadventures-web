@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your listing — BADGERxADVENTURES</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">BADGERxADVENTURES</div>
+  <nav><a href="/">View map</a><a href="#" id="logout">Log out</a></nav>
+</header>
+<div class="dash-layout">
+  <div class="dash-form" id="formArea">Loading…</div>
+  <div class="map-wrap"><svg id="map"></svg></div>
+</div>
+<script src="/static/map.js"></script>
+<script>
+let map, mapdata, myPin = null, draftLatLon = null, allowedType = null;
+
+async function boot(){
+  const meRes = await fetch('/api/my-pin');
+  if (meRes.status === 401) { location.href = '/login'; return; }
+  const me = await meRes.json();
+  myPin = me.pin; allowedType = me.allowed_pin_type;
+
+  mapdata = await fetch('/static/mapdata.json').then(r => r.json());
+  map = new LakeMap(document.getElementById('map'), mapdata);
+
+  if (myPin) {
+    renderEditForm();
+    map.renderPins([myPin]);
+  } else {
+    renderPlaceForm();
+  }
+}
+
+function renderPlaceForm(){
+  document.getElementById('formArea').innerHTML = `
+    <h2>Place your pin</h2>
+    <p style="color:var(--muted);font-size:13px">Click anywhere on the map to drop your pin, then fill in the basics. You can only do this once — pick carefully!</p>
+    <div id="pickHint" style="font-size:13px;color:var(--accent);font-weight:600">Click the map to choose a spot…</div>
+    <label>Name</label>
+    <input id="title" placeholder="e.g. Cedar Ridge Cabin" required>
+    <label>Address</label>
+    <input id="address">
+    <label>Phone</label>
+    <input id="phone">
+    <label>Description</label>
+    <textarea id="description"></textarea>
+    <button class="save" id="placeBtn" disabled>Drop my pin</button>
+    <div class="error-msg" id="err" hidden></div>
+  `;
+  map.enablePlacement((lat, lon) => {
+    draftLatLon = [lat, lon];
+    document.getElementById('pickHint').textContent = 'Spot selected — adjust by clicking again, or save below.';
+    document.getElementById('placeBtn').disabled = false;
+  });
+  document.getElementById('placeBtn').addEventListener('click', async () => {
+    const err = document.getElementById('err'); err.hidden = true;
+    if (!draftLatLon) return;
+    const body = {
+      lat: draftLatLon[0], lon: draftLatLon[1],
+      title: document.getElementById('title').value.trim(),
+      address: document.getElementById('address').value,
+      phone: document.getElementById('phone').value,
+      description: document.getElementById('description').value,
+    };
+    const res = await fetch('/api/my-pin', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.error; err.hidden = false; return; }
+    location.reload();
+  });
+}
+
+function renderEditForm(){
+  const p = myPin;
+  document.getElementById('formArea').innerHTML = `
+    <h2>Edit your listing</h2>
+    <label>Name</label>
+    <input id="title" value="${escAttr(p.title)}">
+    <label>Address</label>
+    <input id="address" value="${escAttr(p.address)}">
+    <label>Phone</label>
+    <input id="phone" value="${escAttr(p.phone)}">
+    <label>Description</label>
+    <textarea id="description">${esc(p.description)}</textarea>
+    <label>What's happening (events, specials, news)</label>
+    <textarea id="events">${esc(p.events)}</textarea>
+    ${p.pin_type === 'stay' ? `
+    <label>Availability (upcoming weeks/months)</label>
+    <div id="availList"></div>
+    <button type="button" class="btn-sm" id="addAvail" style="margin-top:6px">+ Add date range</button>
+    ` : ''}
+    <label>Photos (${(p.photos||[]).length}/8)</label>
+    <div class="photo-grid" id="photoGrid"></div>
+    <input type="file" id="photoInput" accept="image/*" style="margin-top:8px">
+    <button class="save" id="saveBtn">Save changes</button>
+    <div class="error-msg" id="err" hidden></div>
+    <div class="ok-msg" id="ok" hidden>Saved.</div>
+  `;
+  renderPhotos();
+  if (p.pin_type === 'stay') {
+    window._avail = (p.availability || []).slice();
+    renderAvail();
+    document.getElementById('addAvail').addEventListener('click', () => {
+      window._avail.push({from: '', to: ''});
+      renderAvail();
+    });
+  }
+  document.getElementById('saveBtn').addEventListener('click', saveEdits);
+  document.getElementById('photoInput').addEventListener('change', uploadPhoto);
+}
+
+function renderAvail(){
+  const el = document.getElementById('availList');
+  el.innerHTML = window._avail.map((a, i) => `
+    <div class="avail-row">
+      <input type="date" value="${a.from||''}" onchange="window._avail[${i}].from=this.value">
+      <span>to</span>
+      <input type="date" value="${a.to||''}" onchange="window._avail[${i}].to=this.value">
+      <button type="button" onclick="window._avail.splice(${i},1); renderAvail()">✕</button>
+    </div>
+  `).join('');
+}
+
+function renderPhotos(){
+  const el = document.getElementById('photoGrid');
+  el.innerHTML = (myPin.photos || []).map(src => `
+    <div class="ph"><img src="${src}"><button onclick="removePhoto('${src}')">✕</button></div>
+  `).join('');
+}
+
+async function uploadPhoto(e){
+  const file = e.target.files[0]; if (!file) return;
+  const fd = new FormData(); fd.append('photo', file);
+  const res = await fetch('/api/my-pin/photos', {method:'POST', body: fd});
+  const data = await res.json();
+  const err = document.getElementById('err');
+  if (!res.ok) { err.textContent = data.error; err.hidden = false; return; }
+  myPin.photos = data.photos; renderPhotos();
+  e.target.value = '';
+}
+
+async function removePhoto(src){
+  const res = await fetch('/api/my-pin/photos', {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({path: src})});
+  const data = await res.json();
+  if (res.ok) { myPin.photos = data.photos; renderPhotos(); }
+}
+
+async function saveEdits(){
+  const err = document.getElementById('err'), ok = document.getElementById('ok');
+  err.hidden = true; ok.hidden = true;
+  const body = {
+    title: document.getElementById('title').value.trim(),
+    address: document.getElementById('address').value,
+    phone: document.getElementById('phone').value,
+    description: document.getElementById('description').value,
+    events: document.getElementById('events').value,
+  };
+  if (myPin.pin_type === 'stay') body.availability = (window._avail || []).filter(a => a.from && a.to);
+  const res = await fetch('/api/my-pin', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if (!res.ok) { err.textContent = data.error; err.hidden = false; return; }
+  ok.hidden = false;
+}
+
+function esc(s){ return (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function escAttr(s){ return esc(s).replace(/"/g,'&quot;'); }
+
+document.getElementById('logout').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await fetch('/api/logout', {method:'POST'});
+  location.href = '/';
+});
+
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Owner login — BADGERxADVENTURES</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top"><div class="brand">BADGERxADVENTURES</div><nav><a href="/">Back to map</a></nav></header>
+<div class="center-form">
+  <h2>Log in</h2>
+  <form id="f">
+    <label>Email</label>
+    <input name="email" type="email" required>
+    <label>Password</label>
+    <input name="password" type="password" required>
+  </form>
+  <button form="f">Log in</button>
+  <div class="error-msg" id="err" hidden></div>
+  <a class="muted-link" href="/redeem">Have a code instead? Redeem it</a>
+</div>
+<script>
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err'); err.hidden = true;
+  const fd = new FormData(e.target);
+  const res = await fetch('/api/login', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({email: fd.get('email'), password: fd.get('password')})
+  });
+  const data = await res.json();
+  if (!res.ok) { err.textContent = data.error || 'Something went wrong.'; err.hidden = false; return; }
+  location.href = '/dashboard';
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — BADGERxADVENTURES</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">BADGERxADVENTURES admin</div>
+  <nav><a href="/">View map</a><a href="#" id="logout">Log out</a></nav>
+</header>
+<div class="admin-layout">
+  <div class="admin-panel">
+    <h3>Invite codes</h3>
+    <div class="inline-form">
+      <div><label>Type</label>
+        <select id="newType">
+          <option value="business">Business</option>
+          <option value="stay">Cabin / Stay</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div><label>Label (for you)</label><input id="newLabel" placeholder="e.g. Joe's Marina"></div>
+      <button class="btn-sm" id="genBtn">Generate code</button>
+    </div>
+    <div id="freshCode"></div>
+    <table class="admin-table" id="codesTable">
+      <thead><tr><th>Code</th><th>Type</th><th>Label</th><th>Status</th><th>Claimed by</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="admin-panel">
+    <h3>All pins</h3>
+    <table class="admin-table" id="pinsTable">
+      <thead><tr><th>Title</th><th>Type</th><th>Owner</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="editArea" style="margin-top:16px"></div>
+  </div>
+</div>
+<script>
+async function requireAdmin(){
+  const res = await fetch('/api/admin/codes');
+  if (res.status === 401) { location.href = '/admin/login'; return false; }
+  return true;
+}
+
+async function loadCodes(){
+  const rows = await fetch('/api/admin/codes').then(r => r.json());
+  document.querySelector('#codesTable tbody').innerHTML = rows.map(c => `
+    <tr>
+      <td><code>${c.code}</code></td>
+      <td><span class="pill">${c.pin_type}</span></td>
+      <td>${c.label || ''}</td>
+      <td>${c.status}</td>
+      <td>${c.claimed_by_email || ''}</td>
+      <td>${c.status === 'unused' ? `<button class="btn-sm danger" onclick="deleteCode(${c.id})">Delete</button>` : ''}</td>
+    </tr>
+  `).join('');
+}
+
+async function deleteCode(id){
+  await fetch('/api/admin/codes/' + id, {method:'DELETE'});
+  loadCodes();
+}
+
+document.getElementById('genBtn').addEventListener('click', async () => {
+  const pin_type = document.getElementById('newType').value;
+  const label = document.getElementById('newLabel').value;
+  const res = await fetch('/api/admin/codes', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin_type, label})});
+  const data = await res.json();
+  if (res.ok) {
+    document.getElementById('freshCode').innerHTML = `<div class="code-fresh">New code: <code>${data.code}</code> — send this to the owner.</div>`;
+    document.getElementById('newLabel').value = '';
+    loadCodes();
+  }
+});
+
+async function loadPins(){
+  const rows = await fetch('/api/admin/pins').then(r => r.json());
+  document.querySelector('#pinsTable tbody').innerHTML = rows.map(p => `
+    <tr>
+      <td>${p.title}</td>
+      <td><span class="pill">${p.pin_type}</span></td>
+      <td>${p.owner_email || '(admin)'}</td>
+      <td>
+        <button class="btn-sm" onclick="editPin(${p.id})">Edit</button>
+        <button class="btn-sm danger" onclick="deletePin(${p.id})">Delete</button>
+      </td>
+    </tr>
+  `).join('');
+  window._pins = rows;
+}
+
+async function deletePin(id){
+  if (!confirm('Delete this pin?')) return;
+  await fetch('/api/admin/pins/' + id, {method:'DELETE'});
+  loadPins();
+}
+
+function editPin(id){
+  const p = window._pins.find(x => x.id === id);
+  document.getElementById('editArea').innerHTML = `
+    <h4>Editing: ${p.title}</h4>
+    <label>Title</label><input id="e_title" value="${(p.title||'').replace(/"/g,'&quot;')}">
+    <label>Description</label><textarea id="e_desc">${p.description||''}</textarea>
+    <label>Phone</label><input id="e_phone" value="${p.phone||''}">
+    <label>Address</label><input id="e_addr" value="${p.address||''}">
+    <label>Events</label><textarea id="e_events">${p.events||''}</textarea>
+    <button class="save" onclick="saveEditPin(${p.id})">Save</button>
+  `;
+}
+
+async function saveEditPin(id){
+  const body = {
+    title: document.getElementById('e_title').value,
+    description: document.getElementById('e_desc').value,
+    phone: document.getElementById('e_phone').value,
+    address: document.getElementById('e_addr').value,
+    events: document.getElementById('e_events').value,
+  };
+  await fetch('/api/admin/pins/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  document.getElementById('editArea').innerHTML = '';
+  loadPins();
+}
+
+document.getElementById('logout').addEventListener('click', async (e) => {
+  e.preventDefault();
+  await fetch('/api/admin/logout', {method:'POST'});
+  location.href = '/admin/login';
+});
+
+(async () => {
+  if (await requireAdmin()) { loadCodes(); loadPins(); }
+})();
+</script>
+</body>
+</html>
