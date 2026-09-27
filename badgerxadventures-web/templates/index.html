@@ -72,6 +72,13 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.01em;text-wrap:bal
 .lc-warn-count{font-size:12px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
 .lc-warn-msg{width:100%;background:#FDECEA;border:1px solid #F2B8B5;color:#611A15;border-radius:14px;padding:16px;font-size:17px;font-weight:600;line-height:1.45;text-align:left}
 .lc-warn-card button{min-width:180px;height:48px;font-size:15px;font-weight:800}
+#lc-ping-overlay{position:fixed;inset:0;z-index:190;background:rgba(10,10,10,.6);display:flex;align-items:center;justify-content:center;padding:20px}
+.lc-ping-card{width:100%;max-width:400px;background:var(--card);border-radius:20px;box-shadow:0 24px 60px rgba(0,0,0,.4);padding:26px 22px 22px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}
+.lc-ping-card svg{width:40px;height:40px;flex:none}
+.lc-ping-card h2{margin:0;font:800 18px/1.25 var(--display);color:var(--head)}
+.lc-ping-msg{font-size:14px;line-height:1.4;color:var(--muted)}
+.lc-ping-btns{display:flex;gap:10px;width:100%;justify-content:center;flex-wrap:wrap}
+.lc-ping-btns .btn{min-width:120px;height:44px;font-size:14px;font-weight:800}
 .lc-body{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
 .lc-msg{max-width:82%;padding:8px 11px;border-radius:12px;background:var(--card);border:1px solid var(--line);align-self:flex-start}
 .lc-msg.mine{align-self:flex-end;background:#1E7FE0;color:#fff;border-color:#1E7FE0}
@@ -210,6 +217,11 @@ html.mapfull,html.mapfull body{overflow:hidden}
 .me-acc{fill:rgba(255,210,31,.18);stroke:#D9A400;stroke-width:1.2;stroke-dasharray:4 3;vector-effect:non-scaling-stroke}
 .me-bob{animation:bob 1.8s ease-in-out infinite}
 @keyframes bob{50%{transform:translateY(-2.2px)}}
+.ping{pointer-events:none}
+.ping-ring{fill:rgba(30,127,224,.16);stroke:#1E7FE0;stroke-width:1.4;vector-effect:non-scaling-stroke}
+.ping-pin{fill:#1E7FE0;stroke:#fff;stroke-width:1.2px}
+.ping-pin-dot{fill:#fff}
+.ping-label{font-family:var(--body);font-weight:800;font-size:11px;fill:#0E4E8C;paint-order:stroke;stroke:#fff;stroke-width:3.2px;stroke-linejoin:round;text-anchor:middle}
 .mapctl button#zloc[aria-pressed="false"]{color:var(--ink);opacity:1}
 .mapctl button[aria-pressed="true"]#zloc{background:#FFD21F;color:#3B2A00}
 .roads{pointer-events:none}
@@ -677,11 +689,12 @@ a.btn{color:var(--ink);text-decoration:none}
   </form>
   <div class="lc-banned" id="lc-banned" hidden>You&rsquo;ve been removed from Lake Chat by an admin.</div>
   <form class="lc-compose" id="lc-compose" hidden>
-    <input id="lc-text-input" maxlength="500" placeholder="Message the lake... use @name to notify someone" autocomplete="off">
+    <input id="lc-text-input" maxlength="500" placeholder="Message the lake... @name to notify, ping@name to share locations" autocomplete="off">
     <button type="submit" class="btn primary sm">Send</button>
   </form>
 </div>
 <div id="lc-warn-overlay" hidden></div>
+<div id="lc-ping-overlay" hidden></div>
 
   <div class="tools">
     <div class="chips" id="chips" role="group" aria-label="Filter by category"></div>
