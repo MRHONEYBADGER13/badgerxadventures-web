@@ -21,8 +21,20 @@ def init_db():
     conn = get_db()
     with open(os.path.join(os.path.dirname(__file__), "schema.sql")) as f:
         conn.executescript(f.read())
+    _migrate(conn)
     conn.commit()
     conn.close()
+
+
+def _migrate(conn):
+    """Guarded ALTERs for columns added after a table's first deploy.
+    schema.sql's CREATE TABLE IF NOT EXISTS only takes effect for a brand
+    new database, so an existing table needs an explicit ALTER here."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(chat_bans)")}
+    if "name" not in cols:
+        conn.execute("ALTER TABLE chat_bans ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+    if "expires_at" not in cols:
+        conn.execute("ALTER TABLE chat_bans ADD COLUMN expires_at TEXT")
 
 
 def row_to_dict(row):
