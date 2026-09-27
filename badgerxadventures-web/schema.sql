@@ -82,3 +82,58 @@ CREATE TABLE IF NOT EXISTS ads (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ads_sort ON ads(sort_order, id);
+
+-- Lake Chat: an ephemeral public chat room. Messages auto-expire 5 hours
+-- after posting; a guest's claimed name frees up 7 days after being
+-- claimed (both purged lazily whenever chat is touched -- no separate
+-- worker needed). A business/stay owner's chat identity is always their
+-- pin's title, resolved live from pins.title -- never stored here -- so a
+-- guest can never claim a name that currently belongs to a business/stay.
+CREATE TABLE IF NOT EXISTS chat_names (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  name_lower  TEXT UNIQUE NOT NULL,
+  session_id  TEXT UNIQUE NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_names_expires ON chat_names(expires_at);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  name_lower  TEXT NOT NULL,
+  session_id  TEXT NOT NULL DEFAULT '',
+  owner_id    INTEGER,
+  text        TEXT NOT NULL,
+  mentions    TEXT NOT NULL DEFAULT '[]',  -- JSON array of lowercased @names (JSONB on Postgres)
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_name ON chat_messages(name_lower);
+
+-- An admin kick: blocks the person (by browser session, or by owner
+-- account) from claiming a name or posting again, until unbanned.
+CREATE TABLE IF NOT EXISTS chat_bans (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id  TEXT,
+  owner_id    INTEGER,
+  name_lower  TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_bans_session ON chat_bans(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_bans_owner ON chat_bans(owner_id);
+
+-- A private admin warning: visible only to the one person it's addressed
+-- to (matched back to them by session_id or owner_id at read time).
+CREATE TABLE IF NOT EXISTS chat_warnings (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id  TEXT,
+  owner_id    INTEGER,
+  name_lower  TEXT NOT NULL DEFAULT '',
+  text        TEXT NOT NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  read_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_chat_warnings_session ON chat_warnings(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_warnings_owner ON chat_warnings(owner_id);
