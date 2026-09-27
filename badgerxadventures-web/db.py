@@ -2,7 +2,9 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "instance", "app.db")
+_RENDER_DISK_DIR = "/opt/render/project/src/instance"
+DATA_DIR = _RENDER_DISK_DIR if os.path.isdir(_RENDER_DISK_DIR) else os.path.join(os.path.dirname(__file__), "instance")
+DB_PATH = os.path.join(DATA_DIR, "app.db")
 
 
 def get_db():
