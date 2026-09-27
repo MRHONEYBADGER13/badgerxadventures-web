@@ -17388,6 +17388,13 @@
     if (!claimBox || !compose || !banned) return state;
     if (state && state.banned) {
       claimBox.hidden = true; compose.hidden = true; banned.hidden = false;
+      if (state.bannedUntil) {
+        const mins = Math.max(1, Math.ceil((state.bannedUntil - Date.now()) / 60000));
+        banned.textContent = "You’ve been removed from Lake Chat. You can rejoin in about " +
+          mins + " minute" + (mins === 1 ? "" : "s") + ".";
+      } else {
+        banned.textContent = "You’ve been removed from Lake Chat by an admin.";
+      }
     } else if (state && state.name) {
       claimBox.hidden = true; compose.hidden = false; banned.hidden = true;
     } else {
@@ -17398,7 +17405,7 @@
 
   function lcStartPolling() {
     lcStopPolling();
-    lcPollTimer = setInterval(function () { lcFetchMessages(); lcFetchWarnings(); }, 4000);
+    lcPollTimer = setInterval(function () { lcFetchMessages(); lcFetchWarnings(); lcSyncUI(); }, 4000);
   }
   function lcStopPolling() {
     if (lcPollTimer) { clearInterval(lcPollTimer); lcPollTimer = null; }
