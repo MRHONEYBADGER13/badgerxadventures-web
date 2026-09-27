@@ -36,6 +36,12 @@ def _migrate(conn):
     if "expires_at" not in cols:
         conn.execute("ALTER TABLE chat_bans ADD COLUMN expires_at TEXT")
 
+    loc_cols = {row["name"] for row in conn.execute("PRAGMA table_info(chat_locations)")}
+    if "x" not in loc_cols:
+        conn.execute("ALTER TABLE chat_locations ADD COLUMN x REAL")
+    if "y" not in loc_cols:
+        conn.execute("ALTER TABLE chat_locations ADD COLUMN y REAL")
+
 
 def row_to_dict(row):
     return dict(row) if row is not None else None
