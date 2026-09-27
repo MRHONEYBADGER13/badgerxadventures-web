@@ -832,6 +832,7 @@ def chat_cleanup(conn):
     conn.execute("DELETE FROM chat_messages WHERE created_at < datetime('now', '-5 hours')")
     conn.execute("DELETE FROM chat_names WHERE expires_at < datetime('now')")
     conn.execute("DELETE FROM chat_bans WHERE expires_at IS NOT NULL AND expires_at < datetime('now')")
+    conn.execute("DELETE FROM chat_locations WHERE updated_at < datetime('now', '-5 minutes')")
     conn.commit()
 
 def current_chat_sid():
@@ -888,6 +889,27 @@ def _chat_targets(conn):
     for row in conn.execute("SELECT title FROM pins WHERE pin_type IN ('business','stay')"):
         if row["title"]:
             names.add(row["title"])
+    return names
+
+def _chat_on_lake_names(conn):
+    """name_lower of everyone currently reporting themselves as out on the
+    lake right now -- guests via their claimed chat_names row, owners via
+    their pin. A stale chat_locations row (chat_cleanup) just drops out of
+    this join, so nothing needs to actively mark someone as "no longer"."""
+    names = set()
+    for row in conn.execute(
+        "SELECT cn.name_lower FROM chat_locations cl "
+        "JOIN chat_names cn ON cn.session_id = cl.session_id "
+        "WHERE cl.session_id IS NOT NULL AND cl.on_lake = 1"
+    ):
+        names.add(row["name_lower"])
+    for row in conn.execute(
+        "SELECT lower(p.title) AS nl FROM chat_locations cl "
+        "JOIN pins p ON p.owner_id = cl.owner_id AND p.pin_type IN ('business','stay') "
+        "WHERE cl.owner_id IS NOT NULL AND cl.on_lake = 1"
+    ):
+        if row["nl"]:
+            names.add(row["nl"])
     return names
 
 def _find_mentions(text, targets):
@@ -996,7 +1018,7 @@ def api_chat_messages():
     ]
     identity = chat_identity(conn)
     you = {"name": identity["name"], "name_lower": identity["name_lower"]} if identity else None
-    return jsonify({"messages": messages, "you": you})
+    return jsonify({"messages": messages, "you": you, "onLake": sorted(_chat_on_lake_names(conn))})
 
 @app.route("/api/chat/send", methods=["POST"])
 def api_chat_send():
@@ -1028,6 +1050,34 @@ def api_chat_send():
         "id": row["id"], "name": row["name"], "text": row["text"],
         "mentions": json.loads(row["mentions"] or "[]"), "at": _to_ms(row["created_at"]),
     }})
+
+@app.route("/api/chat/location", methods=["POST"])
+def api_chat_location():
+    """A currently-active chatter's device reporting whether it's on the
+    lake right now (a yes/no from their own private location marker, never
+    their actual coordinates). A no-op if they don't have a chat identity
+    yet -- nothing to attach the status to."""
+    conn = get_db()
+    chat_cleanup(conn)
+    identity = chat_identity(conn)
+    if not identity:
+        return jsonify({"ok": True})
+    data = request.get_json(force=True) or {}
+    on_lake = 1 if data.get("onLake") else 0
+    if identity["owner_id"]:
+        conn.execute("DELETE FROM chat_locations WHERE owner_id = ?", (identity["owner_id"],))
+        conn.execute(
+            "INSERT INTO chat_locations (owner_id, on_lake, updated_at) VALUES (?, ?, datetime('now'))",
+            (identity["owner_id"], on_lake),
+        )
+    else:
+        conn.execute("DELETE FROM chat_locations WHERE session_id = ?", (identity["session_id"],))
+        conn.execute(
+            "INSERT INTO chat_locations (session_id, on_lake, updated_at) VALUES (?, ?, datetime('now'))",
+            (identity["session_id"], on_lake),
+        )
+    conn.commit()
+    return jsonify({"ok": True})
 
 @app.route("/api/chat/warnings")
 def api_chat_warnings():
