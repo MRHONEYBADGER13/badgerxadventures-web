@@ -15648,33 +15648,82 @@
     } catch (_) {}
   }
 
-  /* ---------- scrolling ad banner ---------- */
+  /* ---------- ad carousel ---------- */
+  let adTimer = null;
+  function stopAdAutoplay() {
+    if (adTimer) { clearInterval(adTimer); adTimer = null; }
+  }
   async function refreshAds() {
     const el = $("#adbanner");
     const track = $("#adtrack");
+    const dots = $("#addots");
     if (!el || !track) return;
     try {
       const res = await fetch("/api/ads", { credentials: "same-origin" });
       if (!res.ok) return;
       const ads = await res.json();
+      stopAdAutoplay();
       if (!Array.isArray(ads) || !ads.length) {
         el.hidden = true;
         track.innerHTML = "";
+        if (dots) dots.innerHTML = "";
         return;
       }
       const cardHtml = (a) => {
         const img = `<img src="${a.image_path}" alt="${(a.title || "Advertisement").replace(/"/g, "&quot;")}" loading="lazy">`;
-        const label = a.title ? `<span>${a.title}</span>` : "";
+        const label = a.title ? `<span class="adlabel">${a.title}</span>` : "";
         const inner = img + label;
         return a.link_url
           ? `<a class="adcard" href="${a.link_url}" target="_blank" rel="noopener noreferrer">${inner}</a>`
           : `<div class="adcard">${inner}</div>`;
       };
-      const once = ads.map(cardHtml).join("");
-      track.innerHTML = once + once;
+      track.innerHTML = ads.map(cardHtml).join("");
+
+      let adIndex = 0;
+      const goToAd = (i) => {
+        adIndex = (i + ads.length) % ads.length;
+        track.style.transform = `translateX(-${adIndex * 100}%)`;
+        if (dots) {
+          Array.from(dots.children).forEach((btn, bi) => btn.classList.toggle("active", bi === adIndex));
+        }
+      };
+      const nextAd = () => goToAd(adIndex + 1);
+
+      if (dots) {
+        dots.innerHTML = ads.length > 1
+          ? ads.map((_, i) => `<button class="addot" data-i="${i}" aria-label="Show ad ${i + 1}"></button>`).join("")
+          : "";
+        Array.from(dots.children).forEach((btn) => {
+          btn.addEventListener("click", () => { goToAd(parseInt(btn.dataset.i, 10)); restartAdAutoplay(); });
+        });
+      }
+
+      const restartAdAutoplay = () => {
+        stopAdAutoplay();
+        if (ads.length > 1) adTimer = setInterval(nextAd, 5000);
+      };
+
+      goToAd(0);
       el.hidden = false;
+      restartAdAutoplay();
+
+      el.onmouseenter = stopAdAutoplay;
+      el.onmouseleave = restartAdAutoplay;
+
+      let touchStartX = null;
+      track.ontouchstart = (e) => { touchStartX = e.touches[0].clientX; stopAdAutoplay(); };
+      track.ontouchend = (e) => {
+        if (touchStartX === null) return;
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        if (Math.abs(dx) > 40) {
+          if (dx < 0) goToAd(adIndex + 1);
+          else goToAd(adIndex - 1);
+        }
+        touchStartX = null;
+        restartAdAutoplay();
+      };
     } catch (_) {}
-  }
+      }
   function restoreAfterSave() {
     let next = null;
     try {
