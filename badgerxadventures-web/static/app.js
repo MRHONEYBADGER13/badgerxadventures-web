@@ -17251,4 +17251,253 @@
   setInterval(refreshWx, 20 * 60 * 1000);
   refreshAds();
   setInterval(refreshAds, 5 * 60 * 1000);
+
+  /* ---------- lake chat ---------- */
+  let lcMessages = [];
+  let lcYou = null;
+  let lcWarnings = [];
+  let lcWarnUnread = false;
+  let lcOpen = false;
+  let lcPollTimer = null;
+
+  function lcGetSeen() {
+    try { return parseInt(localStorage.getItem("lc_seen_id") || "0", 10) || 0; } catch (_) { return 0; }
+  }
+  function lcSetSeen(id) {
+    try { localStorage.setItem("lc_seen_id", String(id)); } catch (_) {}
+  }
+
+  function lcEscape(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function lcRenderText(text, mentions) {
+    let html = lcEscape(text);
+    if (mentions && mentions.length) {
+      mentions.forEach(function (m) {
+        const re = new RegExp("@" + m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig");
+        html = html.replace(re, function (match) { return '<span class="lc-at">' + lcEscape(match) + "</span>"; });
+      });
+    }
+    return html;
+  }
+
+  function lcRenderMessages() {
+    const body = $("#lc-body");
+    if (!body) return;
+    if (!lcMessages.length) {
+      body.innerHTML = '<div class="lc-empty">No messages yet -- say hey to the lake.</div>';
+      return;
+    }
+    const youLower = lcYou ? lcYou.name_lower : null;
+    body.innerHTML = lcMessages.map(function (m) {
+      const mine = youLower && m.name.toLowerCase() === youLower;
+      const mentioned = youLower && Array.isArray(m.mentions) && m.mentions.indexOf(youLower) !== -1;
+      const cls = "lc-msg" + (mine ? " mine" : "") + (mentioned && !mine ? " mentioned" : "");
+      return '<div class="' + cls + '"><span class="lc-name">' + lcEscape(m.name) +
+        '</span><span class="lc-text">' + lcRenderText(m.text, m.mentions) + "</span></div>";
+    }).join("");
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function lcUpdateBadge() {
+    const badge = $("#lc-badge");
+    if (!badge) return;
+    const seen = lcGetSeen();
+    const youLower = lcYou ? lcYou.name_lower : null;
+    let count = 0;
+    if (youLower) {
+      lcMessages.forEach(function (m) {
+        if (m.id > seen && Array.isArray(m.mentions) && m.mentions.indexOf(youLower) !== -1) count++;
+      });
+    }
+    if (count > 0 && !lcOpen) {
+      badge.hidden = false;
+      badge.textContent = count > 9 ? "9+" : String(count);
+    } else if (lcWarnUnread && !lcOpen) {
+      badge.hidden = false;
+      badge.textContent = "!";
+    } else {
+      badge.hidden = true;
+    }
+  }
+
+  async function lcFetchMessages() {
+    try {
+      const res = await fetch("/api/chat/messages", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = await res.json();
+      lcMessages = Array.isArray(data.messages) ? data.messages : [];
+      lcYou = data.you || null;
+      if (lcOpen) {
+        lcRenderMessages();
+        const last = lcMessages[lcMessages.length - 1];
+        if (last) lcSetSeen(last.id);
+      }
+      lcUpdateBadge();
+    } catch (_) {}
+  }
+
+  function lcRenderWarnings() {
+    const box = $("#lc-warns");
+    if (!box) return;
+    if (!lcWarnings.length) { box.innerHTML = ""; return; }
+    box.innerHTML = lcWarnings.map(function (w) {
+      return '<div class="lc-warn" data-id="' + w.id + '"><span>' + lcEscape(w.text) +
+        '</span><button type="button" class="btn sm" data-ack="' + w.id + '">Got it</button></div>';
+    }).join("");
+    Array.from(box.querySelectorAll("[data-ack]")).forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        const id = btn.getAttribute("data-ack");
+        try { await fetch("/api/chat/warnings/" + id + "/ack", { method: "POST", credentials: "same-origin" }); } catch (_) {}
+        lcWarnings = lcWarnings.filter(function (w) { return String(w.id) !== String(id); });
+        lcWarnUnread = lcWarnings.length > 0;
+        lcRenderWarnings();
+        lcUpdateBadge();
+      });
+    });
+  }
+
+  async function lcFetchWarnings() {
+    try {
+      const res = await fetch("/api/chat/warnings", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = await res.json();
+      lcWarnings = Array.isArray(data) ? data : [];
+      lcWarnUnread = lcWarnings.length > 0;
+      if (lcOpen) lcRenderWarnings();
+      lcUpdateBadge();
+    } catch (_) {}
+  }
+
+  async function lcRefreshState() {
+    try {
+      const res = await fetch("/api/chat/state", { credentials: "same-origin" });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_) { return null; }
+  }
+
+  async function lcSyncUI() {
+    const state = await lcRefreshState();
+    const claimBox = $("#lc-claim");
+    const compose = $("#lc-compose");
+    const banned = $("#lc-banned");
+    if (!claimBox || !compose || !banned) return state;
+    if (state && state.banned) {
+      claimBox.hidden = true; compose.hidden = true; banned.hidden = false;
+    } else if (state && state.name) {
+      claimBox.hidden = true; compose.hidden = false; banned.hidden = true;
+    } else {
+      claimBox.hidden = false; compose.hidden = true; banned.hidden = true;
+    }
+    return state;
+  }
+
+  function lcStartPolling() {
+    lcStopPolling();
+    lcPollTimer = setInterval(function () { lcFetchMessages(); lcFetchWarnings(); }, 4000);
+  }
+  function lcStopPolling() {
+    if (lcPollTimer) { clearInterval(lcPollTimer); lcPollTimer = null; }
+  }
+
+  async function openLakeChat() {
+    const chatViewEl = $("#lakechatView");
+    if (!chatViewEl) return;
+    chatViewEl.hidden = false;
+    lcOpen = true;
+    await lcSyncUI();
+    await lcFetchMessages();
+    await lcFetchWarnings();
+    lcRenderMessages();
+    lcRenderWarnings();
+    const last = lcMessages[lcMessages.length - 1];
+    if (last) lcSetSeen(last.id);
+    lcUpdateBadge();
+    lcStartPolling();
+    const claimBox = $("#lc-claim");
+    if (claimBox && !claimBox.hidden) {
+      const nameInput = $("#lc-name-input");
+      if (nameInput) nameInput.focus();
+    } else {
+      const ti = $("#lc-text-input");
+      if (ti) ti.focus();
+    }
+  }
+
+  function closeLakeChat() {
+    const chatViewEl = $("#lakechatView");
+    if (chatViewEl) chatViewEl.hidden = true;
+    lcOpen = false;
+    lcStopPolling();
+    lcUpdateBadge();
+  }
+
+  async function lcInit() {
+    const btn = $("#lakechat-btn");
+    if (!btn) return;
+    btn.onclick = function () { openLakeChat(); };
+    const backBtn = $("#lc-back");
+    if (backBtn) backBtn.onclick = function () { closeLakeChat(); };
+
+    const claimForm = $("#lc-claim");
+    if (claimForm) {
+      claimForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const input = $("#lc-name-input");
+        const err = $("#lc-claim-err");
+        const name = (input.value || "").trim();
+        if (err) err.textContent = "";
+        try {
+          const res = await fetch("/api/chat/claim", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name }),
+          });
+          const data = await res.json();
+          if (!res.ok) { if (err) err.textContent = data.error || "Could not claim that name."; return; }
+          await lcSyncUI();
+          const ti = $("#lc-text-input");
+          if (ti) ti.focus();
+        } catch (_) { if (err) err.textContent = "Something went wrong. Try again."; }
+      });
+    }
+
+    const composeForm = $("#lc-compose");
+    if (composeForm) {
+      composeForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const input = $("#lc-text-input");
+        const text = (input.value || "").trim();
+        if (!text) return;
+        try {
+          const res = await fetch("/api/chat/send", {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: text }),
+          });
+          const data = await res.json().catch(function () { return {}; });
+          if (res.ok) {
+            input.value = "";
+            await lcFetchMessages();
+            lcRenderMessages();
+          } else {
+            await lcSyncUI();
+            if (data.error) alert(data.error);
+          }
+        } catch (_) {}
+      });
+    }
+
+    await lcSyncUI();
+    await lcFetchMessages();
+    await lcFetchWarnings();
+    lcUpdateBadge();
+  }
+
+  lcInit();
+  setInterval(function () { if (!lcOpen) { lcFetchMessages(); lcFetchWarnings(); } }, 20000);
 })();
