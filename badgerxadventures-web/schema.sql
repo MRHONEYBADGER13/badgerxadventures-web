@@ -146,11 +146,47 @@ CREATE INDEX IF NOT EXISTS idx_chat_warnings_owner ON chat_warnings(owner_id);
 -- their exact coordinates). Only a yes/no plus a timestamp is kept, so a
 -- row that hasn't been refreshed in a while (chat_cleanup) simply stops
 -- counting as "on the lake" -- absence, not a stored "no", is the default.
+-- x/y (present only once a fix has come in) are the same map-pixel space
+-- pins.x/y live in (0..MAP.W, 0..MAP.H on the client) -- still never shown
+-- to anyone by themselves; they only ever leave this table through a
+-- mutually-agreed chat_pings request below.
 CREATE TABLE IF NOT EXISTS chat_locations (
   session_id  TEXT,
   owner_id    INTEGER,
   on_lake     INTEGER NOT NULL DEFAULT 0,
+  x           REAL,
+  y           REAL,
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_chat_locations_session ON chat_locations(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_locations_owner ON chat_locations(owner_id);
+
+-- A mutual-consent request to briefly show two Lake Chat people's current
+-- locations to each other, on the lake map only -- never in chat text and
+-- never anywhere else. Typing "ping@Name" creates one of these; sending it
+-- is NOT agreeing to it -- both from_agreed and to_agreed have to be set
+-- (each from that person explicitly clicking Agree) before anything is
+-- filled in. The moment both are set, each side's chat_locations x/y at
+-- that instant is copied into from_x/y and to_x/y as a one-time snapshot
+-- (never refreshed again) and expires_at is pushed out so the reveal stays
+-- up for a while; a request nobody ever agreed to just expires on its own.
+CREATE TABLE IF NOT EXISTS chat_pings (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_session_id  TEXT,
+  from_owner_id    INTEGER,
+  from_name_lower  TEXT NOT NULL,
+  to_session_id    TEXT,
+  to_owner_id      INTEGER,
+  to_name_lower    TEXT NOT NULL,
+  from_agreed      INTEGER NOT NULL DEFAULT 0,
+  to_agreed        INTEGER NOT NULL DEFAULT 0,
+  from_x           REAL,
+  from_y           REAL,
+  to_x             REAL,
+  to_y             REAL,
+  status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','agreed','declined')),
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_pings_from ON chat_pings(from_session_id, from_owner_id);
+CREATE INDEX IF NOT EXISTS idx_chat_pings_to ON chat_pings(to_session_id, to_owner_id);
