@@ -818,6 +818,344 @@ def api_admin_ads_delete(ad_id):
     return jsonify({"ok": True})
 
 
+# ---------- lake chat ----------
+
+CHAT_NAME_MAX = 24
+CHAT_MSG_MAX = 500
+
+def chat_cleanup(conn):
+    """Lazy expiry: run on every chat request instead of a separate worker.
+    Messages vanish 5 hours after posting; a claimed guest name frees up 7
+    days after being claimed."""
+    conn.execute("DELETE FROM chat_messages WHERE created_at < datetime('now', '-5 hours')")
+    conn.execute("DELETE FROM chat_names WHERE expires_at < datetime('now')")
+    conn.commit()
+
+def current_chat_sid():
+    return request.cookies.get("chat_sid")
+
+def chat_is_banned(conn, session_id, owner_id):
+    if owner_id:
+        return bool(conn.execute("SELECT 1 FROM chat_bans WHERE owner_id = ?", (owner_id,)).fetchone())
+    if session_id:
+        return bool(conn.execute("SELECT 1 FROM chat_bans WHERE session_id = ?", (session_id,)).fetchone())
+    return False
+
+def chat_identity(conn):
+    """Who is asking: a business/stay owner always chats as their pin's
+    title (live, never stored separately); everyone else chats as whatever
+    guest name their browser session has claimed, if any."""
+    owner_id = current_owner_id()
+    if owner_id:
+        pin = conn.execute(
+            "SELECT title FROM pins WHERE owner_id = ? AND pin_type IN ('business','stay')",
+            (owner_id,),
+        ).fetchone()
+        if pin and (pin["title"] or "").strip():
+            name = pin["title"].strip()
+            return {"name": name, "name_lower": name.lower(), "session_id": None,
+                    "owner_id": owner_id, "kind": "owner",
+                    "banned": chat_is_banned(conn, None, owner_id)}
+        return None
+    sid = current_chat_sid()
+    if not sid:
+        return None
+    row = conn.execute("SELECT * FROM chat_names WHERE session_id = ?", (sid,)).fetchone()
+    if not row:
+        return None
+    return {"name": row["name"], "name_lower": row["name_lower"], "session_id": sid,
+            "owner_id": None, "kind": "guest",
+            "banned": chat_is_banned(conn, sid, None)}
+
+def _chat_targets(conn):
+    """Every name someone could currently be @mentioned by: active guest
+    chat names, plus every live business/stay pin title."""
+    names = set()
+    for row in conn.execute("SELECT name FROM chat_names WHERE expires_at > datetime('now')"):
+        names.add(row["name"])
+    for row in conn.execute("SELECT title FROM pins WHERE pin_type IN ('business','stay')"):
+        if row["title"]:
+            names.add(row["title"])
+    return names
+
+def _find_mentions(text, targets):
+    """Scan text for '@name' where name is a known chat target -- longest
+    match first, so a multi-word business name wins over a shorter prefix
+    of it, and a match must end at a word boundary."""
+    found = set()
+    lowered = text.lower()
+    candidates = sorted(targets, key=len, reverse=True)
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] == "@":
+            rest = lowered[i + 1:]
+            for cand in candidates:
+                cl = cand.lower()
+                if cl and rest.startswith(cl):
+                    after = i + 1 + len(cl)
+                    nxt = text[after] if after < n else ""
+                    if not (nxt.isalnum() or nxt == "_"):
+                        found.add(cl)
+                        i = after
+                        break
+            else:
+                i += 1
+        else:
+            i += 1
+    return sorted(found)
+
+@app.route("/api/chat/state")
+def api_chat_state():
+    conn = get_db()
+    chat_cleanup(conn)
+    identity = chat_identity(conn)
+    resp = jsonify({
+        "name": identity["name"] if identity else None,
+        "kind": identity["kind"] if identity else ("owner" if current_owner_id() else "guest"),
+        "banned": identity["banned"] if identity else False,
+        "canClaim": identity is None and not current_owner_id(),
+    })
+    if not current_chat_sid() and not current_owner_id():
+        resp.set_cookie("chat_sid", uuid.uuid4().hex, httponly=True, samesite="Lax",
+                         max_age=60 * 60 * 24 * 400)
+    return resp
+
+@app.route("/api/chat/claim", methods=["POST"])
+def api_chat_claim():
+    if current_owner_id():
+        return jsonify({"error": "Your business/stay name is your chat name."}), 400
+    conn = get_db()
+    chat_cleanup(conn)
+    sid = current_chat_sid() or uuid.uuid4().hex
+    if chat_is_banned(conn, sid, None):
+        return jsonify({"error": "You have been removed from Lake Chat."}), 403
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name or len(name) > CHAT_NAME_MAX:
+        return jsonify({"error": f"Pick a name between 1 and {CHAT_NAME_MAX} characters."}), 400
+    if not all(c.isalnum() or c in "_- " for c in name):
+        return jsonify({"error": "Letters, numbers, spaces, - and _ only."}), 400
+    name_lower = name.lower()
+    dupe = conn.execute(
+        "SELECT 1 FROM chat_names WHERE name_lower = ? AND session_id != ?", (name_lower, sid)
+    ).fetchone()
+    if dupe:
+        return jsonify({"error": "Someone is already using that name today."}), 409
+    biz = conn.execute(
+        "SELECT 1 FROM pins WHERE pin_type IN ('business','stay') AND lower(title) = ?", (name_lower,)
+    ).fetchone()
+    if biz:
+        return jsonify({"error": "That name belongs to a business/stay on the map."}), 409
+    conn.execute("DELETE FROM chat_names WHERE session_id = ?", (sid,))
+    conn.execute(
+        "INSERT INTO chat_names (name, name_lower, session_id, expires_at) "
+        "VALUES (?, ?, ?, datetime('now', '+7 days'))",
+        (name, name_lower, sid),
+    )
+    conn.commit()
+    resp = jsonify({"ok": True, "name": name})
+    resp.set_cookie("chat_sid", sid, httponly=True, samesite="Lax", max_age=60 * 60 * 24 * 400)
+    return resp
+
+@app.route("/api/chat/messages")
+def api_chat_messages():
+    conn = get_db()
+    chat_cleanup(conn)
+    rows = conn.execute(
+        "SELECT id, name, text, mentions, created_at FROM chat_messages ORDER BY id DESC LIMIT 300"
+    ).fetchall()
+    messages = [
+        {"id": r["id"], "name": r["name"], "text": r["text"],
+         "mentions": json.loads(r["mentions"] or "[]"), "at": _to_ms(r["created_at"])}
+        for r in reversed(rows)
+    ]
+    identity = chat_identity(conn)
+    you = {"name": identity["name"], "name_lower": identity["name_lower"]} if identity else None
+    return jsonify({"messages": messages, "you": you})
+
+@app.route("/api/chat/send", methods=["POST"])
+def api_chat_send():
+    conn = get_db()
+    chat_cleanup(conn)
+    identity = chat_identity(conn)
+    if not identity:
+        return jsonify({"error": "Claim a chat name first."}), 400
+    if identity["banned"]:
+        return jsonify({"error": "You have been removed from Lake Chat."}), 403
+    data = request.get_json(force=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Say something first."}), 400
+    text = text[:CHAT_MSG_MAX]
+    targets = _chat_targets(conn)
+    targets.discard(identity["name"])
+    mentions = _find_mentions(text, targets)
+    cur = conn.execute(
+        "INSERT INTO chat_messages (name, name_lower, session_id, owner_id, text, mentions) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (identity["name"], identity["name_lower"], identity["session_id"] or "",
+         identity["owner_id"], text, json.dumps(mentions)),
+    )
+    conn.commit()
+    row = conn.execute("SELECT id, name, text, mentions, created_at FROM chat_messages WHERE id = ?",
+                        (cur.lastrowid,)).fetchone()
+    return jsonify({"ok": True, "message": {
+        "id": row["id"], "name": row["name"], "text": row["text"],
+        "mentions": json.loads(row["mentions"] or "[]"), "at": _to_ms(row["created_at"]),
+    }})
+
+@app.route("/api/chat/warnings")
+def api_chat_warnings():
+    conn = get_db()
+    chat_cleanup(conn)
+    identity = chat_identity(conn)
+    if not identity:
+        return jsonify([])
+    if identity["owner_id"]:
+        rows = conn.execute(
+            "SELECT * FROM chat_warnings WHERE owner_id = ? AND read_at IS NULL ORDER BY id",
+            (identity["owner_id"],),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM chat_warnings WHERE session_id = ? AND read_at IS NULL ORDER BY id",
+            (identity["session_id"],),
+        ).fetchall()
+    return jsonify([{"id": r["id"], "text": r["text"], "at": _to_ms(r["created_at"])} for r in rows])
+
+@app.route("/api/chat/warnings/<int:warn_id>/ack", methods=["POST"])
+def api_chat_warning_ack(warn_id):
+    conn = get_db()
+    identity = chat_identity(conn)
+    if not identity:
+        return jsonify({"error": "Not signed in to chat."}), 400
+    if identity["owner_id"]:
+        conn.execute("UPDATE chat_warnings SET read_at = datetime('now') WHERE id = ? AND owner_id = ?",
+                     (warn_id, identity["owner_id"]))
+    else:
+        conn.execute("UPDATE chat_warnings SET read_at = datetime('now') WHERE id = ? AND session_id = ?",
+                     (warn_id, identity["session_id"]))
+    conn.commit()
+    return jsonify({"ok": True})
+
+# ---------- admin: lake chat moderation ----------
+
+def _chat_resolve_target(conn, name):
+    """Find who currently holds this chat name: a guest claim (session_id)
+    or a business/stay owner (owner_id). Case-insensitive."""
+    name_lower = (name or "").strip().lower()
+    row = conn.execute("SELECT session_id FROM chat_names WHERE name_lower = ?", (name_lower,)).fetchone()
+    if row:
+        return {"session_id": row["session_id"], "owner_id": None, "name_lower": name_lower}
+    row = conn.execute(
+        "SELECT owner_id FROM pins WHERE pin_type IN ('business','stay') AND lower(title) = ? "
+        "AND owner_id IS NOT NULL",
+        (name_lower,),
+    ).fetchone()
+    if row:
+        return {"session_id": None, "owner_id": row["owner_id"], "name_lower": name_lower}
+    return {"session_id": None, "owner_id": None, "name_lower": name_lower}
+
+@app.route("/api/admin/chat/names")
+@admin_required
+def api_admin_chat_names():
+    conn = get_db()
+    chat_cleanup(conn)
+    guests = conn.execute(
+        "SELECT name, session_id, created_at, expires_at FROM chat_names ORDER BY created_at DESC"
+    ).fetchall()
+    owners_rows = conn.execute(
+        "SELECT p.title AS name, p.owner_id FROM pins p "
+        "WHERE p.pin_type IN ('business','stay') AND p.owner_id IS NOT NULL AND p.title != ''"
+    ).fetchall()
+    out = []
+    for r in guests:
+        out.append({"name": r["name"], "kind": "guest",
+                     "banned": chat_is_banned(conn, r["session_id"], None),
+                     "expires_at": r["expires_at"]})
+    for r in owners_rows:
+        out.append({"name": r["name"], "kind": "owner",
+                     "banned": chat_is_banned(conn, None, r["owner_id"]),
+                     "expires_at": None})
+    return jsonify(out)
+
+@app.route("/api/admin/chat/messages")
+@admin_required
+def api_admin_chat_messages():
+    conn = get_db()
+    chat_cleanup(conn)
+    rows = conn.execute(
+        "SELECT id, name, text, created_at FROM chat_messages ORDER BY id DESC LIMIT 500"
+    ).fetchall()
+    return jsonify([{"id": r["id"], "name": r["name"], "text": r["text"], "at": _to_ms(r["created_at"])}
+                     for r in rows])
+
+@app.route("/api/admin/chat/messages/<int:msg_id>", methods=["DELETE"])
+@admin_required
+def api_admin_chat_message_delete(msg_id):
+    conn = get_db()
+    conn.execute("DELETE FROM chat_messages WHERE id = ?", (msg_id,))
+    conn.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/admin/chat/messages/by-name", methods=["DELETE"])
+@admin_required
+def api_admin_chat_messages_by_name():
+    data = request.get_json(force=True) or {}
+    name_lower = (data.get("name") or "").strip().lower()
+    if not name_lower:
+        return jsonify({"error": "name required"}), 400
+    conn = get_db()
+    conn.execute("DELETE FROM chat_messages WHERE name_lower = ?", (name_lower,))
+    conn.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/admin/chat/kick", methods=["POST"])
+@admin_required
+def api_admin_chat_kick():
+    data = request.get_json(force=True) or {}
+    conn = get_db()
+    target = _chat_resolve_target(conn, data.get("name") or "")
+    if not target["session_id"] and not target["owner_id"]:
+        return jsonify({"error": "That name is not currently active in chat."}), 404
+    conn.execute(
+        "INSERT INTO chat_bans (session_id, owner_id, name_lower) VALUES (?, ?, ?)",
+        (target["session_id"], target["owner_id"], target["name_lower"]),
+    )
+    if target["session_id"]:
+        conn.execute("DELETE FROM chat_names WHERE session_id = ?", (target["session_id"],))
+    conn.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/admin/chat/unban", methods=["POST"])
+@admin_required
+def api_admin_chat_unban():
+    data = request.get_json(force=True) or {}
+    name_lower = (data.get("name") or "").strip().lower()
+    conn = get_db()
+    conn.execute("DELETE FROM chat_bans WHERE name_lower = ?", (name_lower,))
+    conn.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/admin/chat/warn", methods=["POST"])
+@admin_required
+def api_admin_chat_warn():
+    data = request.get_json(force=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Enter a warning message."}), 400
+    conn = get_db()
+    target = _chat_resolve_target(conn, data.get("name") or "")
+    if not target["session_id"] and not target["owner_id"]:
+        return jsonify({"error": "That name is not currently active in chat."}), 404
+    conn.execute(
+        "INSERT INTO chat_warnings (session_id, owner_id, name_lower, text) VALUES (?, ?, ?, ?)",
+        (target["session_id"], target["owner_id"], target["name_lower"], text),
+    )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
 if __name__ == "__main__":
     # Local dev only. In production a WSGI server (gunicorn, per the Procfile)
     # runs `app:app` instead of this block, with debug off.
