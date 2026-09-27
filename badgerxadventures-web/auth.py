@@ -10,7 +10,9 @@ import os
 import base64
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
-SECRET_KEY_PATH = os.path.join(os.path.dirname(__file__), "instance", "secret.key")
+_RENDER_DISK_DIR = "/opt/render/project/src/instance"
+_DATA_DIR = _RENDER_DISK_DIR if os.path.isdir(_RENDER_DISK_DIR) else os.path.join(os.path.dirname(__file__), "instance")
+SECRET_KEY_PATH = os.path.join(_DATA_DIR, "secret.key")
 
 
 def get_secret_key():
