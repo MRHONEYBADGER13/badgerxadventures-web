@@ -822,24 +822,36 @@ def api_admin_ads_delete(ad_id):
 
 CHAT_NAME_MAX = 24
 CHAT_MSG_MAX = 500
+CHAT_KICK_MINUTES = 5
 
 def chat_cleanup(conn):
     """Lazy expiry: run on every chat request instead of a separate worker.
     Messages vanish 5 hours after posting; a claimed guest name frees up 7
-    days after being claimed."""
+    days after being claimed; an admin kick lifts itself after
+    CHAT_KICK_MINUTES unless an admin adds the person back sooner."""
     conn.execute("DELETE FROM chat_messages WHERE created_at < datetime('now', '-5 hours')")
     conn.execute("DELETE FROM chat_names WHERE expires_at < datetime('now')")
+    conn.execute("DELETE FROM chat_bans WHERE expires_at IS NOT NULL AND expires_at < datetime('now')")
     conn.commit()
 
 def current_chat_sid():
     return request.cookies.get("chat_sid")
 
 def chat_is_banned(conn, session_id, owner_id):
+    return chat_ban_row(conn, session_id, owner_id) is not None
+
+def chat_ban_row(conn, session_id, owner_id):
+    """The active ban row for this person, if any (None once it has
+    expired -- chat_cleanup() deletes expired rows on every request)."""
     if owner_id:
-        return bool(conn.execute("SELECT 1 FROM chat_bans WHERE owner_id = ?", (owner_id,)).fetchone())
+        return conn.execute(
+            "SELECT * FROM chat_bans WHERE owner_id = ? ORDER BY id DESC LIMIT 1", (owner_id,)
+        ).fetchone()
     if session_id:
-        return bool(conn.execute("SELECT 1 FROM chat_bans WHERE session_id = ?", (session_id,)).fetchone())
-    return False
+        return conn.execute(
+            "SELECT * FROM chat_bans WHERE session_id = ? ORDER BY id DESC LIMIT 1", (session_id,)
+        ).fetchone()
+    return None
 
 def chat_identity(conn):
     """Who is asking: a business/stay owner always chats as their pin's
@@ -909,11 +921,24 @@ def api_chat_state():
     conn = get_db()
     chat_cleanup(conn)
     identity = chat_identity(conn)
+    banned = False
+    banned_until = None
+    if identity:
+        banned = identity["banned"]
+    elif not current_owner_id():
+        # A kicked guest's claimed name is gone, so chat_identity() can't
+        # see them anymore -- check the ban directly by their session so
+        # the "removed" screen (and countdown) still shows correctly.
+        ban = chat_ban_row(conn, current_chat_sid(), None)
+        if ban:
+            banned = True
+            banned_until = _to_ms(ban["expires_at"]) if ban["expires_at"] else None
     resp = jsonify({
         "name": identity["name"] if identity else None,
         "kind": identity["kind"] if identity else ("owner" if current_owner_id() else "guest"),
-        "banned": identity["banned"] if identity else False,
-        "canClaim": identity is None and not current_owner_id(),
+        "banned": banned,
+        "bannedUntil": banned_until,
+        "canClaim": identity is None and not current_owner_id() and not banned,
     })
     if not current_chat_sid() and not current_owner_id():
         resp.set_cookie("chat_sid", uuid.uuid4().hex, httponly=True, samesite="Lax",
@@ -1114,18 +1139,41 @@ def api_admin_chat_messages_by_name():
 @admin_required
 def api_admin_chat_kick():
     data = request.get_json(force=True) or {}
+    display_name = (data.get("name") or "").strip()
     conn = get_db()
-    target = _chat_resolve_target(conn, data.get("name") or "")
+    target = _chat_resolve_target(conn, display_name)
     if not target["session_id"] and not target["owner_id"]:
         return jsonify({"error": "That name is not currently active in chat."}), 404
     conn.execute(
-        "INSERT INTO chat_bans (session_id, owner_id, name_lower) VALUES (?, ?, ?)",
-        (target["session_id"], target["owner_id"], target["name_lower"]),
+        "INSERT INTO chat_bans (session_id, owner_id, name, name_lower, expires_at) "
+        f"VALUES (?, ?, ?, ?, datetime('now', '+{CHAT_KICK_MINUTES} minutes'))",
+        (target["session_id"], target["owner_id"], display_name, target["name_lower"]),
     )
     if target["session_id"]:
         conn.execute("DELETE FROM chat_names WHERE session_id = ?", (target["session_id"],))
     conn.commit()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "minutes": CHAT_KICK_MINUTES})
+
+@app.route("/api/admin/chat/banned")
+@admin_required
+def api_admin_chat_banned():
+    """Everyone currently kicked, so the admin can add someone back before
+    their timeout lifts on its own -- a kicked guest's chat_names row is
+    gone, so they would otherwise disappear from the active-names list."""
+    conn = get_db()
+    chat_cleanup(conn)
+    rows = conn.execute(
+        "SELECT name, name_lower, owner_id, created_at, expires_at FROM chat_bans ORDER BY created_at DESC"
+    ).fetchall()
+    return jsonify([
+        {
+            "name": r["name"] or r["name_lower"],
+            "kind": "owner" if r["owner_id"] else "guest",
+            "at": _to_ms(r["created_at"]),
+            "until": _to_ms(r["expires_at"]) if r["expires_at"] else None,
+        }
+        for r in rows
+    ])
 
 @app.route("/api/admin/chat/unban", methods=["POST"])
 @admin_required
