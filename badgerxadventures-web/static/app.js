@@ -11306,6 +11306,7 @@
     layers.pins = sv("g");
     layers.draft = sv("g");
     layers.me = sv("g", { class: "me" });
+    layers.ping = sv("g", { class: "ping" });
     svg.append(
       layers.sideroads,
       layers.roads,
@@ -11316,6 +11317,7 @@
       layers.pins,
       layers.draft,
       layers.me,
+      layers.ping,
     );
     for (const l of MAP.landmarks) {
       const g = sv("g", { transform: `translate(${l.x} ${l.y})` });
@@ -12540,16 +12542,21 @@
      yet (server-side) or the status hasn't changed recently. */
   let lcLastOnLakeSent = null,
     lcLastOnLakeAt = 0;
-  function reportOnLake(onLake, force) {
+  function reportOnLake(onLake, x, y, force) {
     const now = Date.now();
     if (!force && onLake === lcLastOnLakeSent && now - lcLastOnLakeAt < 60000) return;
     lcLastOnLakeSent = onLake;
     lcLastOnLakeAt = now;
+    const body = { onLake: onLake };
+    if (typeof x === "number" && typeof y === "number") {
+      body.x = x;
+      body.y = y;
+    }
     fetch("/api/chat/location", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ onLake: onLake }),
+      body: JSON.stringify(body),
     }).catch(function () {});
   }
   function stopLoc() {
@@ -12564,6 +12571,25 @@
     layers.me.replaceChildren();
     $("#zloc").setAttribute("aria-pressed", "false");
     reportOnLake(false);
+  }
+  /* Lake Chat's ping@ reveal: the OTHER person's one-time location
+     snapshot, drawn only once both sides have agreed (server enforces
+     that -- this just renders whatever /api/chat/ping/state currently
+     says). Distinct look from the private "me" duck on purpose, so the
+     two are never confused for each other. */
+  function drawPingMarker() {
+    if (!layers.ping) return;
+    layers.ping.replaceChildren();
+    const r = lcPingState && lcPingState.revealed;
+    if (!r) return;
+    const g = sv("g", { class: "ping-mark", transform: `translate(${r.x.toFixed(1)} ${r.y.toFixed(1)})` });
+    g.append(
+      sv("circle", { class: "ping-ring", r: 13 }),
+      sv("path", { class: "ping-pin", d: "M0 1C-6 1 -9.5 -3 -9.5 -7A9.5 9.5 0 0 1 9.5 -7C9.5 -3 6 1 0 1Z" }),
+      sv("circle", { class: "ping-pin-dot", cx: 0, cy: -7, r: 3.4 }),
+      sv("text", { class: "ping-label", x: 0, y: 20, "text-anchor": "middle", text: r.name }),
+    );
+    layers.ping.append(g);
   }
   function locFix(pos, first) {
     const c = pos.coords;
@@ -12593,7 +12619,7 @@
     ME.acc = c.accuracy || 0;
     ME.has = true;
     drawMe();
-    reportOnLake(isOnLake(x, y));
+    reportOnLake(isOnLake(x, y), x, y);
     if (first) {
       flyTo(x, y, 3);
       toast(AVS[AV].hi);
@@ -17321,6 +17347,8 @@
   let lcWarnUnread = false;
   let lcOpen = false;
   let lcPollTimer = null;
+  let lcPingState = { incoming: null, outgoing: null, revealed: null };
+  let lcPingRevealedSeen = null;
 
   function lcGetSeen() {
     try { return parseInt(localStorage.getItem("lc_seen_id") || "0", 10) || 0; } catch (_) { return 0; }
@@ -17452,6 +17480,83 @@
     } catch (_) {}
   }
 
+  /* ping@ consent modal -- shown for either side of a still-pending
+     request; the map marker for an agreed reveal is drawn separately by
+     drawPingMarker(), since that belongs on the map, not in a dialog. */
+  function lcRenderPingModal() {
+    const overlay = $("#lc-ping-overlay");
+    if (!overlay) return;
+    const incoming = lcPingState.incoming, outgoing = lcPingState.outgoing;
+    const req = incoming || outgoing;
+    if (!req) { overlay.hidden = true; overlay.innerHTML = ""; return; }
+    const name = lcEscape(req.name);
+    let heading, body;
+    if (incoming) {
+      heading = req.agreed ? "Waiting on " + name : name + " wants to see where you are";
+      body = req.agreed
+        ? "You agreed to share locations on the lake map. Waiting for " + name + " to agree too."
+        : name + " asked to see your current location and share theirs with you, on the lake map only -- for right now, not live, and nowhere else in the app.";
+    } else {
+      heading = req.agreed ? "Waiting on " + name : "Share locations with " + name + "?";
+      body = req.agreed
+        ? "Waiting for " + name + " to agree to share locations with you on the lake map."
+        : "You asked to see " + name + "'s current location. Agree to also show them yours, on the lake map only -- for right now, not live, and nowhere else in the app.";
+    }
+    const showAgree = !req.agreed;
+    overlay.innerHTML =
+      '<div class="lc-ping-card" data-id="' + req.id + '" role="alertdialog" aria-modal="true">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="#1E7FE0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.4" fill="#1E7FE0" stroke="none"/></svg>' +
+      "<h2>" + heading + "</h2>" +
+      '<div class="lc-ping-msg">' + body + "</div>" +
+      '<div class="lc-ping-btns">' +
+      (showAgree ? '<button type="button" class="btn primary" data-ping-agree="' + req.id + '">Agree</button>' : "") +
+      '<button type="button" class="btn' + (showAgree ? "" : " primary") + '" data-ping-decline="' + req.id + '">' +
+      (incoming ? "Decline" : "Cancel") + "</button>" +
+      "</div></div>";
+    overlay.hidden = false;
+    const agreeBtn = overlay.querySelector("[data-ping-agree]");
+    if (agreeBtn) {
+      agreeBtn.addEventListener("click", async function () {
+        agreeBtn.disabled = true;
+        try {
+          const res = await fetch("/api/chat/ping/" + req.id + "/agree", { method: "POST", credentials: "same-origin" });
+          const data = await res.json().catch(function () { return {}; });
+          if (!res.ok && data.error) alert(data.error);
+        } catch (_) {}
+        await lcFetchPingState();
+      });
+    }
+    const declineBtn = overlay.querySelector("[data-ping-decline]");
+    if (declineBtn) {
+      declineBtn.addEventListener("click", async function () {
+        declineBtn.disabled = true;
+        try { await fetch("/api/chat/ping/" + req.id + "/decline", { method: "POST", credentials: "same-origin" }); } catch (_) {}
+        await lcFetchPingState();
+      });
+    }
+  }
+
+  async function lcFetchPingState() {
+    try {
+      const res = await fetch("/api/chat/ping/state", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = await res.json();
+      lcPingState = data && typeof data === "object" ? data : { incoming: null, outgoing: null, revealed: null };
+    } catch (_) {
+      return;
+    }
+    lcRenderPingModal();
+    drawPingMarker();
+    if (lcPingState.revealed && lcPingState.revealed.id !== lcPingRevealedSeen) {
+      lcPingRevealedSeen = lcPingState.revealed.id;
+      toast(lcPingState.revealed.name + "'s current location is now on the map.");
+      if (isNarrow()) setView("map");
+      flyTo(lcPingState.revealed.x, lcPingState.revealed.y, 3);
+    } else if (!lcPingState.revealed) {
+      lcPingRevealedSeen = null;
+    }
+  }
+
   async function lcRefreshState() {
     try {
       const res = await fetch("/api/chat/state", { credentials: "same-origin" });
@@ -17485,7 +17590,7 @@
 
   function lcStartPolling() {
     lcStopPolling();
-    lcPollTimer = setInterval(function () { lcFetchMessages(); lcFetchWarnings(); lcSyncUI(); }, 4000);
+    lcPollTimer = setInterval(function () { lcFetchMessages(); lcFetchWarnings(); lcSyncUI(); lcFetchPingState(); }, 4000);
   }
   function lcStopPolling() {
     if (lcPollTimer) { clearInterval(lcPollTimer); lcPollTimer = null; }
@@ -17499,6 +17604,7 @@
     await lcSyncUI();
     await lcFetchMessages();
     await lcFetchWarnings();
+    await lcFetchPingState();
     lcRenderMessages();
     lcRenderWarnings();
     const last = lcMessages[lcMessages.length - 1];
@@ -17547,7 +17653,7 @@
           const data = await res.json();
           if (!res.ok) { if (err) err.textContent = data.error || "Could not claim that name."; return; }
           await lcSyncUI();
-          if (ME.has) reportOnLake(isOnLake(ME.x, ME.y), true);
+          if (ME.has) reportOnLake(isOnLake(ME.x, ME.y), ME.x, ME.y, true);
           const ti = $("#lc-text-input");
           if (ti) ti.focus();
         } catch (_) { if (err) err.textContent = "Something went wrong. Try again."; }
@@ -17561,6 +17667,26 @@
         const input = $("#lc-text-input");
         const text = (input.value || "").trim();
         if (!text) return;
+        const pingMatch = /^ping@(.*)$/i.exec(text);
+        if (pingMatch) {
+          const pingName = pingMatch[1].trim();
+          if (!pingName) { alert("Type ping@ followed by their name."); return; }
+          try {
+            const res = await fetch("/api/chat/ping/request", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: pingName }),
+            });
+            const data = await res.json().catch(function () { return {}; });
+            if (res.ok) {
+              input.value = "";
+              await lcFetchPingState();
+            } else if (data.error) {
+              alert(data.error);
+            }
+          } catch (_) {}
+          return;
+        }
         try {
           const res = await fetch("/api/chat/send", {
             method: "POST", credentials: "same-origin",
@@ -17583,6 +17709,7 @@
     await lcSyncUI();
     await lcFetchMessages();
     await lcFetchWarnings();
+    await lcFetchPingState();
     lcUpdateBadge();
   }
 
@@ -17590,5 +17717,8 @@
   setInterval(function () { if (!lcOpen) { lcFetchMessages(); lcFetchWarnings(); } }, 20000);
   /* keep the "on the lake" boat badge fresh even while chat is closed and
      the GPS hasn't produced a fresh fix on its own in a while */
-  setInterval(function () { if (ME.has) reportOnLake(isOnLake(ME.x, ME.y), true); }, 30000);
+  setInterval(function () { if (ME.has) reportOnLake(isOnLake(ME.x, ME.y), ME.x, ME.y, true); }, 30000);
+  /* the ping@ consent modal and the revealed-location map marker both need
+     to work whether or not Lake Chat itself is open right now */
+  setInterval(lcFetchPingState, 5000);
 })();
