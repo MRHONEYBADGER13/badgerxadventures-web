@@ -13255,7 +13255,7 @@
           ? ROLE.hasPin
             ? "Your pin is live"
             : "Signed in \u2014 place your pin"
-          : "Browsing \u2014 get a code to list your business or stay \u2014 call or text 513-965-1574";
+          : "Browsing \u2014 get a code to list your business or stay \u2014 email us at BADGERxADVENTURES@gmail.com";
     box.title = label;
     box.append(
       h("i", { class: "dot" + (ROLE.kind === "guest" ? " off" : "") }),
@@ -17341,23 +17341,33 @@
   }
 
   function lcRenderWarnings() {
-    const box = $("#lc-warns");
-    if (!box) return;
-    if (!lcWarnings.length) { box.innerHTML = ""; return; }
-    box.innerHTML = lcWarnings.map(function (w) {
-      return '<div class="lc-warn" data-id="' + w.id + '"><span>' + lcEscape(w.text) +
-        '</span><button type="button" class="btn sm" data-ack="' + w.id + '">Got it</button></div>';
-    }).join("");
-    Array.from(box.querySelectorAll("[data-ack]")).forEach(function (btn) {
+    const overlay = $("#lc-warn-overlay");
+    if (!overlay) return;
+    if (!lcWarnings.length) { overlay.hidden = true; overlay.innerHTML = ""; return; }
+    const w = lcWarnings[0];
+    const count = lcWarnings.length > 1
+      ? '<div class="lc-warn-count">Warning 1 of ' + lcWarnings.length + '</div>' : "";
+    overlay.innerHTML =
+      '<div class="lc-warn-card" data-id="' + w.id + '" role="alertdialog" aria-modal="true">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="#B3261E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 22.4 21H1.6z"/><line x1="12" y1="9.5" x2="12" y2="14.3"/><circle cx="12" cy="17.6" r=".9" fill="#B3261E" stroke="none"/></svg>' +
+      '<h2>A message from BADGERxADVENTURES</h2>' +
+      count +
+      '<div class="lc-warn-msg">' + lcEscape(w.text) + '</div>' +
+      '<button type="button" class="btn primary" data-ack="' + w.id + '">I Understand, Continue</button>' +
+      '</div>';
+    overlay.hidden = false;
+    const btn = overlay.querySelector("[data-ack]");
+    if (btn) {
       btn.addEventListener("click", async function () {
+        btn.disabled = true;
         const id = btn.getAttribute("data-ack");
         try { await fetch("/api/chat/warnings/" + id + "/ack", { method: "POST", credentials: "same-origin" }); } catch (_) {}
-        lcWarnings = lcWarnings.filter(function (w) { return String(w.id) !== String(id); });
+        lcWarnings = lcWarnings.filter(function (w2) { return String(w2.id) !== String(id); });
         lcWarnUnread = lcWarnings.length > 0;
         lcRenderWarnings();
         lcUpdateBadge();
       });
-    });
+    }
   }
 
   async function lcFetchWarnings() {
@@ -17367,7 +17377,7 @@
       const data = await res.json();
       lcWarnings = Array.isArray(data) ? data : [];
       lcWarnUnread = lcWarnings.length > 0;
-      if (lcOpen) lcRenderWarnings();
+      lcRenderWarnings();
       lcUpdateBadge();
     } catch (_) {}
   }
