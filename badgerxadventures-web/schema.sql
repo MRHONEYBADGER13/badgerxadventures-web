@@ -113,13 +113,16 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at
 CREATE INDEX IF NOT EXISTS idx_chat_messages_name ON chat_messages(name_lower);
 
 -- An admin kick: blocks the person (by browser session, or by owner
--- account) from claiming a name or posting again, until unbanned.
+-- account) from claiming a name or posting again. Auto-expires after a
+-- few minutes (expires_at) unless an admin adds them back sooner.
 CREATE TABLE IF NOT EXISTS chat_bans (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id  TEXT,
   owner_id    INTEGER,
+  name        TEXT NOT NULL DEFAULT '',
   name_lower  TEXT NOT NULL DEFAULT '',
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_chat_bans_session ON chat_bans(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_bans_owner ON chat_bans(owner_id);
