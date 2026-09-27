@@ -726,6 +726,96 @@ def api_admin_owners_delete(owner_id):
     return jsonify({"ok": True})
 
 
+# ---------- ad banner ----------
+
+def ad_to_dict(row):
+    return {
+        "id": row["id"],
+        "image_path": row["image_path"],
+        "title": row["title"],
+        "link_url": row["link_url"],
+        "sort_order": row["sort_order"],
+    }
+
+
+@app.route("/api/ads")
+def api_ads():
+    """Public: the current ad strip, in display order. Empty list if none set."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM ads ORDER BY sort_order, id").fetchall()
+    return jsonify([ad_to_dict(r) for r in rows])
+
+
+@app.route("/api/admin/ads", methods=["GET"])
+@admin_required
+def api_admin_ads_list():
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM ads ORDER BY sort_order, id").fetchall()
+    return jsonify([ad_to_dict(r) for r in rows])
+
+
+@app.route("/api/admin/ads", methods=["POST"])
+@admin_required
+def api_admin_ads_create():
+    file = request.files.get("image")
+    if not file or not file.content_type.startswith("image/"):
+        return jsonify({"error": "Please upload an image file."}), 400
+    title = (request.form.get("title") or "").strip()
+    link_url = (request.form.get("link_url") or "").strip()
+    try:
+        sort_order = int(request.form.get("sort_order") or 0)
+    except ValueError:
+        sort_order = 0
+    try:
+        image_path = _save_photo(file)
+    except Exception:
+        return jsonify({"error": "Couldn't read that image."}), 400
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO ads (image_path, title, link_url, sort_order) VALUES (?, ?, ?, ?)",
+        (image_path, title, link_url, sort_order),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM ads WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify({"ok": True, "ad": ad_to_dict(row)})
+
+
+@app.route("/api/admin/ads/<int:ad_id>", methods=["PUT"])
+@admin_required
+def api_admin_ads_update(ad_id):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM ads WHERE id = ?", (ad_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "Not found."}), 404
+    data = request.get_json(force=True) or {}
+    title = data.get("title", row["title"])
+    link_url = data.get("link_url", row["link_url"])
+    try:
+        sort_order = int(data.get("sort_order", row["sort_order"]))
+    except (TypeError, ValueError):
+        sort_order = row["sort_order"]
+    conn.execute(
+        "UPDATE ads SET title = ?, link_url = ?, sort_order = ? WHERE id = ?",
+        (title, link_url, sort_order, ad_id),
+    )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/ads/<int:ad_id>", methods=["DELETE"])
+@admin_required
+def api_admin_ads_delete(ad_id):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM ads WHERE id = ?", (ad_id,)).fetchone()
+    if row:
+        fpath = os.path.join(UPLOAD_DIR, os.path.basename(row["image_path"]))
+        if os.path.exists(fpath):
+            os.remove(fpath)
+        conn.execute("DELETE FROM ads WHERE id = ?", (ad_id,))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
 if __name__ == "__main__":
     # Local dev only. In production a WSGI server (gunicorn, per the Procfile)
     # runs `app:app` instead of this block, with debug off.
