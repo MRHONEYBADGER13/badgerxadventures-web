@@ -823,16 +823,21 @@ def api_admin_ads_delete(ad_id):
 CHAT_NAME_MAX = 24
 CHAT_MSG_MAX = 500
 CHAT_KICK_MINUTES = 5
+CHAT_PING_REQUEST_MINUTES = 5   # how long an un-agreed ping@ request waits before it expires
+CHAT_PING_REVEAL_MINUTES = 20   # how long a mutually-agreed location stays shown on the map
 
 def chat_cleanup(conn):
     """Lazy expiry: run on every chat request instead of a separate worker.
     Messages vanish 5 hours after posting; a claimed guest name frees up 7
     days after being claimed; an admin kick lifts itself after
-    CHAT_KICK_MINUTES unless an admin adds the person back sooner."""
+    CHAT_KICK_MINUTES unless an admin adds the person back sooner; a
+    ping@ request or an agreed-to location reveal both clean up the same
+    way, just against their own expires_at."""
     conn.execute("DELETE FROM chat_messages WHERE created_at < datetime('now', '-5 hours')")
     conn.execute("DELETE FROM chat_names WHERE expires_at < datetime('now')")
     conn.execute("DELETE FROM chat_bans WHERE expires_at IS NOT NULL AND expires_at < datetime('now')")
     conn.execute("DELETE FROM chat_locations WHERE updated_at < datetime('now', '-5 minutes')")
+    conn.execute("DELETE FROM chat_pings WHERE expires_at < datetime('now')")
     conn.commit()
 
 def current_chat_sid():
@@ -937,6 +942,53 @@ def _find_mentions(text, targets):
         else:
             i += 1
     return sorted(found)
+
+def _chat_resolve_ping_name(conn, raw):
+    """Match the text right after 'ping@' against everyone currently
+    nameable in chat -- an exact (case-insensitive) name first, then the
+    longest known name the text starts with, so trailing words after the
+    name (like a normal @mention) don't break the match. Returns the
+    target's real-cased name, or None."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    low = raw.lower()
+    targets = _chat_targets(conn)
+    for t in targets:
+        if t.lower() == low:
+            return t
+    for t in sorted(targets, key=len, reverse=True):
+        tl = t.lower()
+        if tl and low.startswith(tl):
+            nxt = raw[len(tl):len(tl) + 1]
+            if not (nxt.isalnum() or nxt == "_"):
+                return t
+    return None
+
+def _chat_ping_side(row, identity):
+    """Which side of a chat_pings row this identity is on -- 'from', 'to',
+    or None if it's neither (matched the same way chat_identity() itself
+    is: owner_id for owners, session_id for guests)."""
+    if identity["owner_id"]:
+        if row["from_owner_id"] == identity["owner_id"]:
+            return "from"
+        if row["to_owner_id"] == identity["owner_id"]:
+            return "to"
+    elif identity["session_id"]:
+        if row["from_session_id"] == identity["session_id"]:
+            return "from"
+        if row["to_session_id"] == identity["session_id"]:
+            return "to"
+    return None
+
+def _chat_ping_clear_for(conn, session_id, owner_id):
+    """Only one active/pending ping@ request per person at a time -- drop
+    anything else involving them (either side) before starting a fresh
+    one, so the consent UI never has to juggle more than one."""
+    if owner_id:
+        conn.execute("DELETE FROM chat_pings WHERE from_owner_id = ? OR to_owner_id = ?", (owner_id, owner_id))
+    elif session_id:
+        conn.execute("DELETE FROM chat_pings WHERE from_session_id = ? OR to_session_id = ?", (session_id, session_id))
 
 @app.route("/api/chat/state")
 def api_chat_state():
@@ -1054,9 +1106,11 @@ def api_chat_send():
 @app.route("/api/chat/location", methods=["POST"])
 def api_chat_location():
     """A currently-active chatter's device reporting whether it's on the
-    lake right now (a yes/no from their own private location marker, never
-    their actual coordinates). A no-op if they don't have a chat identity
-    yet -- nothing to attach the status to."""
+    lake right now, plus (privately) where "here" currently is in map-pixel
+    space. The on/off yes-no is the only part anyone else ever sees (the
+    boat badge); the x/y is kept only so a mutually-agreed ping@ request
+    (below) has a current fix to snapshot -- it never goes out any other
+    way. A no-op if they don't have a chat identity yet."""
     conn = get_db()
     chat_cleanup(conn)
     identity = chat_identity(conn)
@@ -1064,19 +1118,171 @@ def api_chat_location():
         return jsonify({"ok": True})
     data = request.get_json(force=True) or {}
     on_lake = 1 if data.get("onLake") else 0
+    x, y = data.get("x"), data.get("y")
+    try:
+        x = float(x) if x is not None else None
+        y = float(y) if y is not None else None
+    except (TypeError, ValueError):
+        x = y = None
     if identity["owner_id"]:
         conn.execute("DELETE FROM chat_locations WHERE owner_id = ?", (identity["owner_id"],))
         conn.execute(
-            "INSERT INTO chat_locations (owner_id, on_lake, updated_at) VALUES (?, ?, datetime('now'))",
-            (identity["owner_id"], on_lake),
+            "INSERT INTO chat_locations (owner_id, on_lake, x, y, updated_at) VALUES (?, ?, ?, ?, datetime('now'))",
+            (identity["owner_id"], on_lake, x, y),
         )
     else:
         conn.execute("DELETE FROM chat_locations WHERE session_id = ?", (identity["session_id"],))
         conn.execute(
-            "INSERT INTO chat_locations (session_id, on_lake, updated_at) VALUES (?, ?, datetime('now'))",
-            (identity["session_id"], on_lake),
+            "INSERT INTO chat_locations (session_id, on_lake, x, y, updated_at) VALUES (?, ?, ?, ?, datetime('now'))",
+            (identity["session_id"], on_lake, x, y),
         )
     conn.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/chat/ping/request", methods=["POST"])
+def api_chat_ping_request():
+    """Someone typed 'ping@Name' in Lake Chat. This only starts a
+    mutual-consent request -- it does NOT by itself agree to anything, and
+    nothing is shared yet. Never touches chat_messages: a ping is a command,
+    not a posted message."""
+    conn = get_db()
+    chat_cleanup(conn)
+    identity = chat_identity(conn)
+    if not identity:
+        return jsonify({"error": "Claim a chat name first."}), 400
+    if identity["banned"]:
+        return jsonify({"error": "You have been removed from Lake Chat."}), 403
+    data = request.get_json(force=True) or {}
+    raw = (data.get("name") or "").strip()
+    if not raw:
+        return jsonify({"error": "Type ping@ followed by their name."}), 400
+    target_name = _chat_resolve_ping_name(conn, raw)
+    if not target_name or target_name.lower() == identity["name_lower"]:
+        if target_name and target_name.lower() == identity["name_lower"]:
+            return jsonify({"error": "You can't ping yourself."}), 400
+        return jsonify({"error": "No one by that name is in Lake Chat right now."}), 404
+    target = _chat_resolve_target(conn, target_name)
+    if not target["session_id"] and not target["owner_id"]:
+        return jsonify({"error": "No one by that name is in Lake Chat right now."}), 404
+    _chat_ping_clear_for(conn, identity["session_id"], identity["owner_id"])
+    _chat_ping_clear_for(conn, target["session_id"], target["owner_id"])
+    conn.execute(
+        "INSERT INTO chat_pings (from_session_id, from_owner_id, from_name_lower, "
+        "to_session_id, to_owner_id, to_name_lower, expires_at) "
+        f"VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+{CHAT_PING_REQUEST_MINUTES} minutes'))",
+        (identity["session_id"], identity["owner_id"], identity["name_lower"],
+         target["session_id"], target["owner_id"], target["name_lower"]),
+    )
+    conn.commit()
+    return jsonify({"ok": True, "name": target_name})
+
+def _chat_ping_display_name(conn, name_lower):
+    """The real-cased spelling of a stored name_lower, if it's still a
+    live chat target; falls back to the lowercased form otherwise."""
+    for t in _chat_targets(conn):
+        if t.lower() == name_lower:
+            return t
+    return name_lower
+
+@app.route("/api/chat/ping/state")
+def api_chat_ping_state():
+    """This person's current ping@ situation: at most one of an incoming
+    request waiting on their Agree click, an outgoing one waiting on
+    theirs (or on the other person's), or a mutually-agreed reveal of the
+    other person's one-time location snapshot."""
+    empty = {"incoming": None, "outgoing": None, "revealed": None}
+    conn = get_db()
+    chat_cleanup(conn)
+    identity = chat_identity(conn)
+    if not identity:
+        return jsonify(empty)
+    if identity["owner_id"]:
+        row = conn.execute(
+            "SELECT * FROM chat_pings WHERE from_owner_id = ? OR to_owner_id = ? ORDER BY id DESC LIMIT 1",
+            (identity["owner_id"], identity["owner_id"]),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM chat_pings WHERE from_session_id = ? OR to_session_id = ? ORDER BY id DESC LIMIT 1",
+            (identity["session_id"], identity["session_id"]),
+        ).fetchone()
+    if not row:
+        return jsonify(empty)
+    side = _chat_ping_side(row, identity)
+    if not side:
+        return jsonify(empty)
+    other_lower = row["to_name_lower"] if side == "from" else row["from_name_lower"]
+    other_name = _chat_ping_display_name(conn, other_lower)
+    my_agreed = bool(row["from_agreed"] if side == "from" else row["to_agreed"])
+    other_agreed = bool(row["to_agreed"] if side == "from" else row["from_agreed"])
+    out = dict(empty)
+    if row["status"] == "agreed":
+        ox = row["to_x"] if side == "from" else row["from_x"]
+        oy = row["to_y"] if side == "from" else row["from_y"]
+        if ox is not None and oy is not None:
+            out["revealed"] = {"id": row["id"], "name": other_name, "x": ox, "y": oy}
+    elif row["status"] == "pending":
+        info = {"id": row["id"], "name": other_name, "agreed": my_agreed, "otherAgreed": other_agreed}
+        out["outgoing" if side == "from" else "incoming"] = info
+    return jsonify(out)
+
+@app.route("/api/chat/ping/<int:ping_id>/agree", methods=["POST"])
+def api_chat_ping_agree(ping_id):
+    """One of the two people in a ping@ request clicking Agree. Only once
+    BOTH sides have done this does anything get revealed -- and at that
+    exact moment, each side's latest chat_locations fix is copied in as a
+    one-time snapshot (never updated again afterward)."""
+    conn = get_db()
+    chat_cleanup(conn)
+    identity = chat_identity(conn)
+    if not identity:
+        return jsonify({"error": "Not signed in to chat."}), 400
+    row = conn.execute("SELECT * FROM chat_pings WHERE id = ?", (ping_id,)).fetchone()
+    if not row or row["status"] != "pending":
+        return jsonify({"error": "That request is no longer active."}), 404
+    side = _chat_ping_side(row, identity)
+    if not side:
+        return jsonify({"error": "That request isn't yours to answer."}), 403
+    conn.execute(
+        "UPDATE chat_pings SET " + ("from_agreed" if side == "from" else "to_agreed") + " = 1 WHERE id = ?",
+        (ping_id,),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM chat_pings WHERE id = ?", (ping_id,)).fetchone()
+    if row["from_agreed"] and row["to_agreed"]:
+        def _loc(session_id, owner_id):
+            if owner_id:
+                return conn.execute("SELECT x, y FROM chat_locations WHERE owner_id = ?", (owner_id,)).fetchone()
+            if session_id:
+                return conn.execute("SELECT x, y FROM chat_locations WHERE session_id = ?", (session_id,)).fetchone()
+            return None
+        from_loc = _loc(row["from_session_id"], row["from_owner_id"])
+        to_loc = _loc(row["to_session_id"], row["to_owner_id"])
+        if not from_loc or from_loc["x"] is None or not to_loc or to_loc["x"] is None:
+            conn.execute("DELETE FROM chat_pings WHERE id = ?", (ping_id,))
+            conn.commit()
+            return jsonify({"error": "Couldn't find a current location for one of you -- make "
+                                      "sure your location is turned on and try again."}), 409
+        conn.execute(
+            "UPDATE chat_pings SET status = 'agreed', from_x = ?, from_y = ?, to_x = ?, to_y = ?, "
+            f"expires_at = datetime('now', '+{CHAT_PING_REVEAL_MINUTES} minutes') WHERE id = ?",
+            (from_loc["x"], from_loc["y"], to_loc["x"], to_loc["y"], ping_id),
+        )
+        conn.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/chat/ping/<int:ping_id>/decline", methods=["POST"])
+def api_chat_ping_decline(ping_id):
+    """Either side can call off a ping@ request (or end a reveal early) --
+    this just removes it for both of them."""
+    conn = get_db()
+    identity = chat_identity(conn)
+    if not identity:
+        return jsonify({"error": "Not signed in to chat."}), 400
+    row = conn.execute("SELECT * FROM chat_pings WHERE id = ?", (ping_id,)).fetchone()
+    if row and _chat_ping_side(row, identity):
+        conn.execute("DELETE FROM chat_pings WHERE id = ?", (ping_id,))
+        conn.commit()
     return jsonify({"ok": True})
 
 @app.route("/api/chat/warnings")
