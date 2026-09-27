@@ -54,6 +54,21 @@
     <div id="adsList" style="display:flex;flex-wrap:wrap;gap:10px"></div>
   </div>
 </div>
+
+  <div class="admin-panel">
+    <h3>Lake Chat</h3>
+    <p style="font-size:13px;color:var(--muted);margin-top:0">
+      Messages disappear 5 hours after posting; a guest's claimed name frees up 7 days later.
+      Business/stay owners always chat under their pin's name, and that name is reserved for them.
+    </p>
+    <h4 style="margin-bottom:6px">Active names</h4>
+    <table class="admin-table" id="chatNamesTable">
+      <thead><tr><th>Name</th><th>Type</th><th></th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <h4 style="margin:16px 0 6px">Messages</h4>
+    <div id="chatMessages" style="max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 10px"></div>
+  </div>
 <script>
 async function requireAdmin(){
   const res = await fetch('/api/admin/codes');
@@ -192,8 +207,74 @@ document.getElementById('logout').addEventListener('click', async (e) => {
   location.href = '/admin/login';
 });
 
+function escHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function loadChatNames(){
+  const rows = await fetch('/api/admin/chat/names').then(r => r.json());
+  const tbody = document.querySelector('#chatNamesTable tbody');
+  tbody.innerHTML = rows.map(n => `
+    <tr>
+      <td>${escHtml(n.name)}</td>
+      <td><span class="pill">${escHtml(n.kind)}</span></td>
+      <td>${n.banned ? '<span style="color:#B3261E;font-weight:700">banned</span>' : ''}</td>
+      <td>
+        ${n.banned
+          ? `<button class="btn-sm" data-act="unban" data-name="${escHtml(n.name)}">Unban</button>`
+          : `<button class="btn-sm danger" data-act="kick" data-name="${escHtml(n.name)}">Kick</button>`}
+        <button class="btn-sm" data-act="warn" data-name="${escHtml(n.name)}">Warn</button>
+        <button class="btn-sm danger" data-act="delmsgs" data-name="${escHtml(n.name)}">Del msgs</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" style="color:var(--muted)">No one is chatting right now.</td></tr>';
+}
+
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  const act = btn.dataset.act;
+  const name = btn.dataset.name;
+  if (act === 'kick') {
+    if (!confirm('Kick "' + name + '" from Lake Chat? Their name frees up and they cannot post again unless unbanned.')) return;
+    await fetch('/api/admin/chat/kick', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+    loadChatNames();
+  } else if (act === 'unban') {
+    await fetch('/api/admin/chat/unban', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+    loadChatNames();
+  } else if (act === 'warn') {
+    const text = prompt('Private warning for "' + name + '" (only they will see this):');
+    if (!text) return;
+    const res = await fetch('/api/admin/chat/warn', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, text})});
+    const data = await res.json();
+    if (!res.ok) alert(data.error || 'Could not send warning.');
+  } else if (act === 'delmsgs') {
+    if (!confirm('Delete all of "' + name + '" messages?')) return;
+    await fetch('/api/admin/chat/messages/by-name', {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+    loadChatMessages();
+  } else if (act === 'delmsg') {
+    const id = btn.dataset.id;
+    await fetch('/api/admin/chat/messages/' + id, {method:'DELETE'});
+    loadChatMessages();
+  }
+});
+
+async function loadChatMessages(){
+  const rows = await fetch('/api/admin/chat/messages').then(r => r.json());
+  document.getElementById('chatMessages').innerHTML = rows.map(m => `
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)">
+      <div style="min-width:0">
+        <strong>${escHtml(m.name)}</strong>
+        <span style="color:var(--muted);font-size:12px">${new Date(m.at).toLocaleString()}</span>
+        <div style="word-break:break-word">${escHtml(m.text)}</div>
+      </div>
+      <button class="btn-sm danger" style="flex:none;height:26px" data-act="delmsg" data-id="${m.id}">Delete</button>
+    </div>
+  `).join('') || '<div style="color:var(--muted);font-size:13px">No messages.</div>';
+}
+
 (async () => {
-  if (await requireAdmin()) { loadCodes(); loadPins(); loadAds(); }
+  if (await requireAdmin()) { loadCodes(); loadPins(); loadAds(); loadChatNames(); loadChatMessages(); setInterval(() => { loadChatNames(); loadChatMessages(); }, 10000); }
 })();
 </script>
 </body>
