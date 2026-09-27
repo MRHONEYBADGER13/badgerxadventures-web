@@ -11210,6 +11210,41 @@
   /* ---------------------------------------------------------------- map */
   const svg = $("#map");
   const layers = {};
+
+  /* is a map-space point (same coordinate space as MAP.shore/landmarks)
+     over lake water? MAP.shore is one path of closed subpaths (M...Z) using
+     an even-odd fill, so a plain ray-cast across every subpath's edges
+     together already gives the right in/out answer. */
+  let SHORE_POLYS = null;
+  function shorePolygons() {
+    if (!SHORE_POLYS) {
+      SHORE_POLYS = (MAP.shore.match(/M[^M]*/g) || []).map(function (sp) {
+        const flat = sp
+          .replace(/[MLZ]/g, " ")
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+        const poly = [];
+        for (let i = 0; i < flat.length; i += 2) poly.push([flat[i], flat[i + 1]]);
+        return poly;
+      });
+    }
+    return SHORE_POLYS;
+  }
+  function isOnLake(x, y) {
+    let inside = false;
+    shorePolygons().forEach(function (poly) {
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i][0], yi = poly[i][1];
+        const xj = poly[j][0], yj = poly[j][1];
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+          inside = !inside;
+        }
+      }
+    });
+    return inside;
+  }
+
   function buildMap() {
     svg.setAttribute("viewBox", `0 0 ${MAP.W} ${MAP.H}`);
     const pad = 700;
@@ -12499,6 +12534,24 @@
     )
       closeAvPick();
   });
+  /* Lake Chat's "little boat" badge: a private yes/no (never coordinates)
+     reported to the server so OTHER chatters can see this person is
+     currently out on the lake. No-ops quietly if there's no chat identity
+     yet (server-side) or the status hasn't changed recently. */
+  let lcLastOnLakeSent = null,
+    lcLastOnLakeAt = 0;
+  function reportOnLake(onLake, force) {
+    const now = Date.now();
+    if (!force && onLake === lcLastOnLakeSent && now - lcLastOnLakeAt < 60000) return;
+    lcLastOnLakeSent = onLake;
+    lcLastOnLakeAt = now;
+    fetch("/api/chat/location", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ onLake: onLake }),
+    }).catch(function () {});
+  }
   function stopLoc() {
     try {
       if (ME.id != null) navigator.geolocation.clearWatch(ME.id);
@@ -12510,6 +12563,7 @@
     S.ducking = false;
     layers.me.replaceChildren();
     $("#zloc").setAttribute("aria-pressed", "false");
+    reportOnLake(false);
   }
   function locFix(pos, first) {
     const c = pos.coords;
@@ -12539,6 +12593,7 @@
     ME.acc = c.accuracy || 0;
     ME.has = true;
     drawMe();
+    reportOnLake(isOnLake(x, y));
     if (first) {
       flyTo(x, y, 3);
       toast(AVS[AV].hi);
@@ -12554,16 +12609,17 @@
     syncChrome();
     if (isNarrow()) setView("map");
   }
-  function locError(e) {
+  function locError(e, quiet) {
     if (e && e.code === 3 && ME.has) return;
     const code = e && e.code;
     if (code === 3 || code === 2) {
       stopLoc();
-      toast(
-        code === 3
-          ? "Finding you took too long. Try again with a clearer view of the sky."
-          : "Could not find your location right now.",
-      );
+      if (!quiet)
+        toast(
+          code === 3
+            ? "Finding you took too long. Try again with a clearer view of the sky."
+            : "Could not find your location right now.",
+        );
       return;
     }
     try {
@@ -12571,6 +12627,10 @@
     } catch (_) {}
     ME.id = null;
     ME.blocked = true;
+    if (quiet) {
+      stopLoc();
+      return;
+    }
     startPick();
     toast(
       "This page cannot use your phone\u2019s location, so tap the map where you are.",
@@ -12595,11 +12655,11 @@
           locFix(p, first);
           first = false;
         },
-        locError,
+        (e) => locError(e, quiet),
         { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
       );
     } catch (e) {
-      locError(e);
+      locError(e, quiet);
     }
   }
   function setRoads(on) {
@@ -17247,6 +17307,7 @@
   renderAll();
   setView("map");
   restoreAfterSave();
+  startLoc(true); /* quietly find them and drop their private duck on the map right away; a no-op if a save-restore already placed it, and silent if location is denied/unavailable */
   refreshWx();
   setInterval(refreshWx, 20 * 60 * 1000);
   refreshAds();
@@ -17255,6 +17316,7 @@
   /* ---------- lake chat ---------- */
   let lcMessages = [];
   let lcYou = null;
+  let lcOnLakeSet = new Set();
   let lcWarnings = [];
   let lcWarnUnread = false;
   let lcOpen = false;
@@ -17284,6 +17346,12 @@
     return html;
   }
 
+  const LC_BOAT_SVG =
+    '<svg class="lc-boat" viewBox="0 0 24 24" aria-hidden="true" title="On the lake right now">' +
+    '<path d="M3 15h18l-2.3 4.3a2 2 0 0 1-1.8 1.1H7.1a2 2 0 0 1-1.8-1.1L3 15Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>' +
+    '<path d="M12 15V5.5M8.5 9h7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
+    "</svg>";
+
   function lcRenderMessages() {
     const body = $("#lc-body");
     if (!body) return;
@@ -17296,7 +17364,8 @@
       const mine = youLower && m.name.toLowerCase() === youLower;
       const mentioned = youLower && Array.isArray(m.mentions) && m.mentions.indexOf(youLower) !== -1;
       const cls = "lc-msg" + (mine ? " mine" : "") + (mentioned && !mine ? " mentioned" : "");
-      return '<div class="' + cls + '"><span class="lc-name">' + lcEscape(m.name) +
+      const boat = lcOnLakeSet.has(m.name.toLowerCase()) ? LC_BOAT_SVG : "";
+      return '<div class="' + cls + '"><span class="lc-name">' + boat + lcEscape(m.name) +
         '</span><span class="lc-text">' + lcRenderText(m.text, m.mentions) + "</span></div>";
     }).join("");
     body.scrollTop = body.scrollHeight;
@@ -17331,6 +17400,7 @@
       const data = await res.json();
       lcMessages = Array.isArray(data.messages) ? data.messages : [];
       lcYou = data.you || null;
+      lcOnLakeSet = new Set(Array.isArray(data.onLake) ? data.onLake : []);
       if (lcOpen) {
         lcRenderMessages();
         const last = lcMessages[lcMessages.length - 1];
@@ -17477,6 +17547,7 @@
           const data = await res.json();
           if (!res.ok) { if (err) err.textContent = data.error || "Could not claim that name."; return; }
           await lcSyncUI();
+          if (ME.has) reportOnLake(isOnLake(ME.x, ME.y), true);
           const ti = $("#lc-text-input");
           if (ti) ti.focus();
         } catch (_) { if (err) err.textContent = "Something went wrong. Try again."; }
@@ -17517,4 +17588,7 @@
 
   lcInit();
   setInterval(function () { if (!lcOpen) { lcFetchMessages(); lcFetchWarnings(); } }, 20000);
+  /* keep the "on the lake" boat badge fresh even while chat is closed and
+     the GPS hasn't produced a fresh fix on its own in a while */
+  setInterval(function () { if (ME.has) reportOnLake(isOnLake(ME.x, ME.y), true); }, 30000);
 })();
