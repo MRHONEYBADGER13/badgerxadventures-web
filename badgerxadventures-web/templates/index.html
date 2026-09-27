@@ -48,6 +48,15 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.01em;text-wrap:bal
 
 /* header */
 .top{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap}
+.adbanner{flex-basis:100%;width:100%;overflow:hidden;border-radius:10px;background:var(--card);border:1px solid var(--line)}
+.adbanner[hidden]{display:none!important}
+.adbanner .adtrack{display:flex;align-items:stretch;width:max-content;animation:adscroll 32s linear infinite}
+.adbanner:hover .adtrack{animation-play-state:paused}
+.adbanner .adcard{flex:none;display:flex;align-items:center;gap:10px;padding:6px 14px;text-decoration:none;color:inherit;border-right:1px solid var(--line)}
+.adbanner .adcard img{height:48px;width:auto;max-width:220px;object-fit:cover;border-radius:6px;flex:none}
+.adbanner .adcard span{font-size:12.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+@keyframes adscroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion: reduce){.adbanner .adtrack{animation:none;overflow-x:auto}}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
 .brand>div:last-child{min-width:0}
 .mark{width:36px;height:36px;border-radius:11px;background:var(--water-deep);display:grid;place-items:center;color:#fff;flex:none}
@@ -376,12 +385,13 @@ a.btn{color:var(--ink);text-decoration:none}
   .lockup{padding-bottom:26px}
   .mark{width:32px;height:32px;border-radius:10px}
   .mark svg{width:20px;height:20px}
-  .viewer{order:2}
+.adbanner{order:2}
+  .viewer{order:3}
   .viewer b{display:none}
-  .modes{order:3;flex:1 1 100%;display:flex}
+  .modes{order:4;flex:1 1 100%;display:flex}
   .modes button{flex:1;justify-content:center}
-  .search{order:4;flex:1 1 0;min-width:0}
-  .add{order:5;flex:none;padding:0 14px}
+  .search{order:5;flex:1 1 0;min-width:0}
+  .add{order:6;flex:none;padding:0 14px}
   #app{grid-template-rows:auto auto minmax(0,1fr) auto auto}
   .wxc{flex-basis:226px;min-width:226px}
   .wxh{padding:8px 12px}
@@ -601,6 +611,7 @@ a.btn{color:var(--ink);text-decoration:none}
       <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.400-6.500 11-6.500 11z"/><path d="M8.500 10.500c1 -1 2 -1 3.500 0s2.500 1 3.500 0"/></svg></div>
       <div class="lockup"><h1>BADGERxADVEN<span class="th">TU<svg class="badger" viewBox="1 1.5 30 23" role="button" tabindex="0" aria-label="Play the badger jet ski game" focusable="false"><rect x="-1" y="0" width="34" height="27" fill="transparent" pointer-events="all"/><circle cx="7" cy="6.5" r="3.6" fill="#1B1B1B" stroke="currentColor" stroke-width="1"/><circle cx="25" cy="6.5" r="3.6" fill="#1B1B1B" stroke="currentColor" stroke-width="1"/><circle cx="6.6" cy="5.6" r="1.4" fill="#fff"/><circle cx="25.4" cy="5.6" r="1.4" fill="#fff"/><ellipse cx="16" cy="13.5" rx="11" ry="9.3" fill="#fff" stroke="currentColor" stroke-width="1"/><path d="M7 7.5C9.5 5.5 12 7 12.6 10L14 20.5C11 20.5 8 18 6.6 14 5.6 11 6 9 7 7.5z" fill="#1B1B1B"/><path d="M25 7.5C22.5 5.5 20 7 19.4 10L18 20.5C21 20.5 24 18 25.4 14 26.4 11 26 9 25 7.5z" fill="#1B1B1B"/><circle cx="10.6" cy="11.6" r="1" fill="#fff"/><circle cx="21.4" cy="11.6" r="1" fill="#fff"/><ellipse cx="16" cy="19.4" rx="2.3" ry="1.6" fill="#1B1B1B"/></svg></span>RES</h1><small id="stats">Community map</small></div>
     </div>
+      <div class="adbanner" id="adbanner" hidden><div class="adtrack" id="adtrack"></div></div>
     <div class="spacer"></div>
     <div class="modes" role="group" aria-label="Choose a map">
       <button type="button" id="m-lake" aria-pressed="true"><svg class="gl" aria-hidden="true"><use href="#g-drop"/></svg>Lake map</button>
