@@ -70,3 +70,15 @@ CREATE TABLE IF NOT EXISTS pins (
 
 CREATE INDEX IF NOT EXISTS idx_pins_type ON pins(pin_type);
 CREATE INDEX IF NOT EXISTS idx_codes_status ON invite_codes(code, status);
+-- Scrolling ad banner shown at the top of the app, above the map. Admin-only
+-- to add/remove; sort_order controls left-to-right order in the strip.
+CREATE TABLE IF NOT EXISTS ads (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  image_path  TEXT NOT NULL,        -- /static/uploads/<file>.jpg
+  title       TEXT NOT NULL DEFAULT '',  -- optional caption, e.g. "20% off bait this week"
+  link_url    TEXT NOT NULL DEFAULT '',  -- optional; banner is clickable if set
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ads_sort ON ads(sort_order, id);
