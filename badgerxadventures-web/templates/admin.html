@@ -38,6 +38,21 @@
     </table>
     <div id="editArea" style="margin-top:16px"></div>
   </div>
+  <div class="admin-panel">
+    <h3>Ad banner</h3>
+    <p style="font-size:13px;color:var(--muted);margin-top:0">
+      These images scroll across the top of the app, above the map. Add as many as you like —
+      each can have an optional caption and an optional link (tap/click opens it in a new tab).
+    </p>
+    <div class="inline-form">
+      <div><label>Image</label><input type="file" id="adImage" accept="image/*"></div>
+      <div><label>Caption (optional)</label><input id="adTitle" placeholder="e.g. 20% off bait this week"></div>
+      <div><label>Link (optional)</label><input id="adLink" placeholder="https://..."></div>
+      <button class="btn-sm" id="adAddBtn">Add ad</button>
+    </div>
+    <div id="adMsg" style="margin-bottom:10px"></div>
+    <div id="adsList" style="display:flex;flex-wrap:wrap;gap:10px"></div>
+  </div>
 </div>
 <script>
 async function requireAdmin(){
@@ -125,6 +140,52 @@ async function saveEditPin(id){
   loadPins();
 }
 
+async function loadAds(){
+  const rows = await fetch('/api/admin/ads').then(r => r.json());
+  document.getElementById('adsList').innerHTML = rows.map(a => `
+    <div style="width:180px;border:1px solid var(--line);border-radius:8px;padding:8px;background:#fff">
+      <img src="${a.image_path}" alt="" style="width:100%;height:90px;object-fit:cover;border-radius:6px;display:block">
+      <div style="font-size:12px;margin-top:6px;min-height:16px">${a.title || ''}</div>
+      <div style="font-size:11px;color:var(--muted);word-break:break-all">${a.link_url || ''}</div>
+      <button class="btn-sm danger" style="margin-top:6px;width:100%" onclick="deleteAd(${a.id})">Delete</button>
+    </div>
+  `).join('') || '<div style="color:var(--muted);font-size:13px">No ads yet.</div>';
+}
+
+async function deleteAd(id){
+  if (!confirm('Delete this ad?')) return;
+  await fetch('/api/admin/ads/' + id, {method:'DELETE'});
+  loadAds();
+}
+
+document.getElementById('adAddBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('adImage');
+  const msg = document.getElementById('adMsg');
+  msg.className = '';
+  if (!fileInput.files || !fileInput.files[0]) {
+    msg.textContent = 'Choose an image first.';
+    msg.className = 'error-msg';
+    return;
+  }
+  const fd = new FormData();
+  fd.append('image', fileInput.files[0]);
+  fd.append('title', document.getElementById('adTitle').value);
+  fd.append('link_url', document.getElementById('adLink').value);
+  const res = await fetch('/api/admin/ads', {method:'POST', body: fd});
+  const data = await res.json();
+  if (res.ok) {
+    msg.textContent = 'Ad added.';
+    msg.className = 'ok-msg';
+    fileInput.value = '';
+    document.getElementById('adTitle').value = '';
+    document.getElementById('adLink').value = '';
+    loadAds();
+  } else {
+    msg.textContent = data.error || 'Could not add ad.';
+    msg.className = 'error-msg';
+  }
+});
+
 document.getElementById('logout').addEventListener('click', async (e) => {
   e.preventDefault();
   await fetch('/api/admin/logout', {method:'POST'});
@@ -132,7 +193,7 @@ document.getElementById('logout').addEventListener('click', async (e) => {
 });
 
 (async () => {
-  if (await requireAdmin()) { loadCodes(); loadPins(); }
+  if (await requireAdmin()) { loadCodes(); loadPins(); loadAds(); }
 })();
 </script>
 </body>
