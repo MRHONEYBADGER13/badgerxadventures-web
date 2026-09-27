@@ -13255,7 +13255,7 @@
           ? ROLE.hasPin
             ? "Your pin is live"
             : "Signed in \u2014 place your pin"
-          : "Browsing \u2014 get a code to list your business or stay";
+          : "Browsing \u2014 get a code to list your business or stay \u2014 call or text 513-965-1574";
     box.title = label;
     box.append(
       h("i", { class: "dot" + (ROLE.kind === "guest" ? " off" : "") }),
