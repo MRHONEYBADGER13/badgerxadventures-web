@@ -25,7 +25,9 @@ import auth
 import weather
 
 app = Flask(__name__)
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "static", "uploads")
+_RENDER_DISK_DIR = "/opt/render/project/src/instance"
+_DATA_DIR = _RENDER_DISK_DIR if os.path.isdir(_RENDER_DISK_DIR) else os.path.join(os.path.dirname(__file__), "instance")
+UPLOAD_DIR = os.path.join(_DATA_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 MAX_PHOTOS_BY_TYPE = {"business": 3, "custom": 3, "stay": 5}
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024  # 12MB raw upload cap per file, before we resize down
