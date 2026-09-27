@@ -140,3 +140,17 @@ CREATE TABLE IF NOT EXISTS chat_warnings (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_warnings_session ON chat_warnings(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_warnings_owner ON chat_warnings(owner_id);
+
+-- Whether a currently-active chatter's device last reported itself as
+-- being out on the lake (from their own private "my location" duck, never
+-- their exact coordinates). Only a yes/no plus a timestamp is kept, so a
+-- row that hasn't been refreshed in a while (chat_cleanup) simply stops
+-- counting as "on the lake" -- absence, not a stored "no", is the default.
+CREATE TABLE IF NOT EXISTS chat_locations (
+  session_id  TEXT,
+  owner_id    INTEGER,
+  on_lake     INTEGER NOT NULL DEFAULT 0,
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_chat_locations_session ON chat_locations(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_locations_owner ON chat_locations(owner_id);
