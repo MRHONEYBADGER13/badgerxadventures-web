@@ -15647,6 +15647,34 @@
       }
     } catch (_) {}
   }
+
+  /* ---------- scrolling ad banner ---------- */
+  async function refreshAds() {
+    const el = $("#adbanner");
+    const track = $("#adtrack");
+    if (!el || !track) return;
+    try {
+      const res = await fetch("/api/ads", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const ads = await res.json();
+      if (!Array.isArray(ads) || !ads.length) {
+        el.hidden = true;
+        track.innerHTML = "";
+        return;
+      }
+      const cardHtml = (a) => {
+        const img = `<img src="${a.image_path}" alt="${(a.title || "Advertisement").replace(/"/g, "&quot;")}" loading="lazy">`;
+        const label = a.title ? `<span>${a.title}</span>` : "";
+        const inner = img + label;
+        return a.link_url
+          ? `<a class="adcard" href="${a.link_url}" target="_blank" rel="noopener noreferrer">${inner}</a>`
+          : `<div class="adcard">${inner}</div>`;
+      };
+      const once = ads.map(cardHtml).join("");
+      track.innerHTML = once + once;
+      el.hidden = false;
+    } catch (_) {}
+  }
   function restoreAfterSave() {
     let next = null;
     try {
@@ -17172,4 +17200,6 @@
   restoreAfterSave();
   refreshWx();
   setInterval(refreshWx, 20 * 60 * 1000);
+  refreshAds();
+  setInterval(refreshAds, 5 * 60 * 1000);
 })();
