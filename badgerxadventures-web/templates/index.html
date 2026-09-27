@@ -48,11 +48,11 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.01em;text-wrap:bal
 
 /* header */
 .top{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap}
-.adbanner{flex-basis:100%;width:100%;position:relative;overflow:hidden;border-radius:10px;background:var(--card);border:1px solid var(--line)}
+.adbanner{flex-basis:100%;width:100%;height:96px;position:relative;overflow:hidden;border-radius:10px;background:var(--card);border:1px solid var(--line)}
 .adbanner[hidden]{display:none!important}
-.adbanner .adtrack{display:flex;width:100%;transition:transform .5s ease}
-.adbanner .adcard{flex:0 0 100%;width:100%;display:block;text-decoration:none;color:inherit;position:relative}
-.adbanner .adcard img{display:block;width:100%;height:auto;aspect-ratio:12/5;object-fit:cover}
+.adbanner .adtrack{display:flex;height:100%;width:100%;transition:transform .5s ease}
+.adbanner .adcard{flex:0 0 100%;width:100%;height:100%;display:block;text-decoration:none;color:inherit;position:relative}
+.adbanner .adcard img{display:block;width:100%;height:100%;object-fit:cover}
 .adbanner .adcard .adlabel{position:absolute;left:10px;bottom:8px;font-size:12.5px;font-weight:600;color:#fff;background:rgba(0,0,0,.5);padding:3px 9px;border-radius:6px}
 .adbanner .addots{position:absolute;right:10px;bottom:8px;display:flex;gap:6px;z-index:2}
 .adbanner .addot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.55);border:none;padding:0;cursor:pointer}
