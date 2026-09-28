@@ -191,3 +191,15 @@ CREATE TABLE IF NOT EXISTS chat_pings (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_pings_from ON chat_pings(from_session_id, from_owner_id);
 CREATE INDEX IF NOT EXISTS idx_chat_pings_to ON chat_pings(to_session_id, to_owner_id);
+
+-- Site-visit counter, shown only on the admin dashboard. One row per unique
+-- visitor (a salted hash of their IP, never the IP itself) per calendar day
+-- (UTC) -- loading the page twice in a day doesn't inflate it. "Since
+-- launch" = distinct ip_hash across every row; "today" = COUNT(*) for
+-- today's date, already deduplicated by the primary key.
+CREATE TABLE IF NOT EXISTS site_visits (
+  day      TEXT NOT NULL,   -- YYYY-MM-DD (UTC)
+  ip_hash  TEXT NOT NULL,
+  PRIMARY KEY (day, ip_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_site_visits_day ON site_visits(day);
