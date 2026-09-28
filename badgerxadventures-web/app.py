@@ -13,8 +13,11 @@ edit or delete any pin, and only the admin can generate invite codes.
 """
 import json
 import os
+import smtplib
+import ssl
 import uuid
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from functools import wraps
 
 from flask import Flask, request, jsonify, render_template, g, send_from_directory, redirect
@@ -25,6 +28,33 @@ import auth
 import weather
 
 app = Flask(__name__)
+
+# ---------- outgoing email (owner password resets) ----------
+# SMTP_PASS is a Gmail "App Password", not the real account password -- set
+# it as an environment variable in Render, never in this file. Without it,
+# send_email() below fails with a clear message instead of crashing.
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_USER = os.environ.get("SMTP_USER", "badgerxadventures@gmail.com")
+SMTP_PASS = os.environ.get("SMTP_PASS")
+SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
+
+
+def send_email(to_addr, subject, text_body):
+    if not SMTP_PASS:
+        raise RuntimeError(
+            "Email isn't set up yet. Add a Gmail App Password as the SMTP_PASS "
+            "environment variable in Render, then try again."
+        )
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_addr
+    msg.set_content(text_body)
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=15) as server:
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
 _RENDER_DISK_DIR = "/opt/render/project/src/instance"
 _DATA_DIR = _RENDER_DISK_DIR if os.path.isdir(_RENDER_DISK_DIR) else os.path.join(os.path.dirname(__file__), "instance")
 UPLOAD_DIR = os.path.join(_DATA_DIR, "uploads")
@@ -270,6 +300,11 @@ def login_page():
     return render_template("login.html")
 
 
+@app.route("/reset-password")
+def reset_password_page():
+    return render_template("reset_password.html")
+
+
 @app.route("/dashboard")
 def dashboard_page():
     # The old standalone dashboard is retired -- everything (placing your
@@ -376,6 +411,28 @@ def api_logout():
     resp = jsonify({"ok": True})
     resp.delete_cookie("owner_session")
     return resp
+
+
+@app.route("/api/reset-password", methods=["POST"])
+def api_reset_password():
+    data = request.get_json(force=True) or {}
+    token = data.get("token") or ""
+    password = data.get("password") or ""
+    if len(password) < 8:
+        return jsonify({"error": "Choose a password with at least 8 characters."}), 400
+    payload = auth.read_reset_token(token)
+    if not payload:
+        return jsonify({"error": "This link is invalid or has expired. Ask an admin to send a new one."}), 400
+    conn = get_db()
+    owner = conn.execute("SELECT * FROM owners WHERE id = ?", (payload.get("owner_id"),)).fetchone()
+    if not owner or auth.pw_marker(owner["password_hash"]) != payload.get("h"):
+        return jsonify({"error": "This link has already been used. Ask an admin to send a new one."}), 400
+    conn.execute(
+        "UPDATE owners SET password_hash = ? WHERE id = ?",
+        (auth.hash_password(password), owner["id"]),
+    )
+    conn.commit()
+    return jsonify({"ok": True})
 
 
 # ---------- owner: their own pin only ----------
@@ -725,6 +782,32 @@ def api_admin_owners_delete(owner_id):
     conn = get_db()
     conn.execute("DELETE FROM owners WHERE id = ?", (owner_id,))
     conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/owners/<int:owner_id>/send-reset", methods=["POST"])
+@admin_required
+def api_admin_owners_send_reset(owner_id):
+    conn = get_db()
+    owner = conn.execute("SELECT * FROM owners WHERE id = ?", (owner_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "That owner no longer exists."}), 404
+    token = auth.make_reset_token(owner["id"], owner["password_hash"])
+    reset_url = request.host_url.rstrip("/") + "/reset-password?token=" + token
+    body = (
+        "Hi,\n\n"
+        "An admin at BADGERxADVENTURES started a password reset for your account "
+        f"({owner['email']}).\n\n"
+        f"Set a new password here:\n{reset_url}\n\n"
+        "This link expires in 2 hours and works only once. If you weren't expecting "
+        "this, you can ignore this email -- your password won't change unless you "
+        "click the link and set a new one.\n\n"
+        "-- BADGERxADVENTURES"
+    )
+    try:
+        send_email(owner["email"], "Reset your BADGERxADVENTURES password", body)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
 
 
