@@ -805,13 +805,13 @@ a.btn{color:var(--ink);text-decoration:none}
       <svg id="map" role="img" aria-label="Map of Lake Cumberland with cove names, ramps, marinas and community pins" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="north" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l5 16-5-3.500L7 19z" fill="currentColor"/></svg></div>
       <div class="mapctl">
+        <button id="zfull" type="button" aria-label="Full screen map" aria-pressed="false" title="Full screen, sideways"><svg aria-hidden="true"><use href="#g-full"/></svg></button>
         <button id="zin" type="button" aria-label="Zoom in">+</button>
         <button id="zout" type="button" aria-label="Zoom out">&minus;</button>
         <button id="zloc" type="button" aria-label="Show my location" aria-pressed="false" title="Show my location"><svg aria-hidden="true"><use href="#g-locate"/></svg></button>
         <button id="zedit" type="button" aria-label="Change my marker" aria-expanded="false" aria-controls="avpick" title="Change my marker"><svg aria-hidden="true"><use href="#g-pencil"/></svg></button>
         <button id="zroad" type="button" aria-label="Roads" aria-pressed="true" title="Roads on or off"><svg aria-hidden="true"><use href="#g-road"/></svg></button>
         <button id="zname" type="button" aria-label="Cove names, ramps and marinas" aria-pressed="true" title="Cove names, ramps and marinas on or off">Aa</button>
-        <button id="zfull" type="button" aria-label="Full screen map" aria-pressed="false" title="Full screen, sideways"><svg aria-hidden="true"><use href="#g-full"/></svg></button>
         <button id="zfit" type="button" aria-label="Show the whole lake"><svg aria-hidden="true"><use href="#g-fit"/></svg></button>
       </div>
       <div class="avpick" id="avpick" role="dialog" aria-label="Choose your marker" hidden></div>
