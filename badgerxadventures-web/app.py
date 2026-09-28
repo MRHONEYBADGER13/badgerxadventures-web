@@ -860,9 +860,15 @@ def chat_ban_row(conn, session_id, owner_id):
     return None
 
 def chat_identity(conn):
-    """Who is asking: a business/stay owner always chats as their pin's
-    title (live, never stored separately); everyone else chats as whatever
-    guest name their browser session has claimed, if any."""
+    """Who is asking: the site admin always chats as a fixed "BADGER"
+    identity (no claiming, never banned); a business/stay owner always
+    chats as their pin's title (live, never stored separately); everyone
+    else chats as whatever guest name their browser session has claimed,
+    if any."""
+    admin_id = current_admin_id()
+    if admin_id:
+        return {"name": "BADGER", "name_lower": "badger", "session_id": f"admin:{admin_id}",
+                "owner_id": None, "kind": "admin", "banned": False}
     owner_id = current_owner_id()
     if owner_id:
         pin = conn.execute(
@@ -1014,7 +1020,7 @@ def api_chat_state():
         "bannedUntil": banned_until,
         "canClaim": identity is None and not current_owner_id() and not banned,
     })
-    if not current_chat_sid() and not current_owner_id():
+    if not current_chat_sid() and not current_owner_id() and not current_admin_id():
         resp.set_cookie("chat_sid", uuid.uuid4().hex, httponly=True, samesite="Lax",
                          max_age=60 * 60 * 24 * 400)
     return resp
@@ -1035,6 +1041,8 @@ def api_chat_claim():
     if not all(c.isalnum() or c in "_- " for c in name):
         return jsonify({"error": "Letters, numbers, spaces, - and _ only."}), 400
     name_lower = name.lower()
+    if name_lower == "badger":
+        return jsonify({"error": "That name is reserved."}), 409
     dupe = conn.execute(
         "SELECT 1 FROM chat_names WHERE name_lower = ? AND session_id != ?", (name_lower, sid)
     ).fetchone()
