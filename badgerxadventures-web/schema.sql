@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS chat_names (
   name        TEXT NOT NULL,
   name_lower  TEXT UNIQUE NOT NULL,
   session_id  TEXT UNIQUE NOT NULL,
+  ip          TEXT,                     -- captured when the name is claimed, for admin moderation only
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at  TEXT NOT NULL
 );
@@ -122,11 +123,23 @@ CREATE TABLE IF NOT EXISTS chat_bans (
   owner_id    INTEGER,
   name        TEXT NOT NULL DEFAULT '',
   name_lower  TEXT NOT NULL DEFAULT '',
+  ip          TEXT,                     -- the chat_names.ip they had at the moment of the kick/ban
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_chat_bans_session ON chat_bans(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_bans_owner ON chat_bans(owner_id);
+
+-- A permanent, site-wide IP block -- separate from chat_bans above (which
+-- only blocks Lake Chat, and can be evaded by clearing cookies for a fresh
+-- browser session). Checked on every request except /admin, /api/admin and
+-- /static, so the admin can never lock themselves out; there's no expiry
+-- column because this list is only ever cleared by an admin's own unban.
+CREATE TABLE IF NOT EXISTS banned_ips (
+  ip          TEXT PRIMARY KEY,
+  label       TEXT NOT NULL DEFAULT '',  -- the chat name they had when banned, for reference
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- A private admin warning: visible only to the one person it's addressed
 -- to (matched back to them by session_id or owner_id at read time).
