@@ -45,6 +45,41 @@ SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
 # table. Doesn't need to be a real secret or an env var.
 VISIT_SALT = "badgerxadventures-visit-salt-v1"
 
+# ---------- maintenance mode ----------
+# Flip MAINTENANCE_MODE to "1" in Render's environment settings (no code
+# change needed) before a deploy that needs real downtime, and everyone gets
+# the "badger on a boat" holding page instead of a broken site. It does NOT
+# cover the raw 502 Bad Gateway page Render's own proxy shows when this
+# process isn't up yet (cold boot, crash-before-start) -- that page is
+# served before any request reaches Flask, so app code can never style it.
+# This covers the two things app code *can* control: a deliberate
+# maintenance window (this flag) and an unhandled crash while the app is
+# running (the 500 handler below), which is the closest practical
+# equivalent.
+MAINTENANCE_MODE = os.environ.get("MAINTENANCE_MODE", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
+
+@app.before_request
+def _maintenance_gate():
+    if not MAINTENANCE_MODE:
+        return None
+    # Let the page's own assets and the Android app-link check through --
+    # everything else gets the holding page while maintenance is on.
+    if request.path.startswith("/static/") or request.path.startswith("/.well-known/"):
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "BadgerXAdventures is temporarily down for an update. Check back soon!"}), 503
+    return render_template("maintenance.html"), 503
+
+
+@app.errorhandler(500)
+def _server_error(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Something went wrong on our end. Please try again."}), 500
+    return render_template("maintenance.html"), 500
+
 
 def send_email(to_addr, subject, text_body):
     if not SMTP_PASS:
