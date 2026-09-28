@@ -42,12 +42,24 @@
     <h3>Ad banner</h3>
     <p style="font-size:13px;color:var(--muted);margin-top:0">
       These images scroll across the top of the app, above the map. Add as many as you like —
-      each can have an optional caption and an optional link (tap/click opens it in a new tab).
+      each can have an optional caption, and can optionally link to a web page OR fly the map to
+      one of your pins when tapped. Recommended image size: about 1200×300px (a 4:1 landscape
+      rectangle) — the banner now shows the whole image rather than cropping it, so anything close
+      to that shape will look good at every screen size.
     </p>
     <div class="inline-form">
       <div><label>Image</label><input type="file" id="adImage" accept="image/*"></div>
       <div><label>Caption (optional)</label><input id="adTitle" placeholder="e.g. 20% off bait this week"></div>
-      <div><label>Link (optional)</label><input id="adLink" placeholder="https://..."></div>
+      <div>
+        <label>Link (optional)</label>
+        <select id="adLinkType">
+          <option value="">No link</option>
+          <option value="url">Web page</option>
+          <option value="pin">Map pin</option>
+        </select>
+      </div>
+      <div id="adLinkUrlWrap" style="display:none"><label>URL</label><input id="adLink" placeholder="https://..."></div>
+      <div id="adLinkPinWrap" style="display:none"><label>Pin</label><select id="adLinkPin"><option value="">Choose a pin…</option></select></div>
       <button class="btn-sm" id="adAddBtn">Add ad</button>
     </div>
     <div id="adMsg" style="margin-bottom:10px"></div>
@@ -127,6 +139,14 @@ async function loadPins(){
     </tr>
   `).join('');
   window._pins = rows;
+  const adPinSel = document.getElementById('adLinkPin');
+  if (adPinSel) adPinSel.innerHTML = '<option value="">Choose a pin…</option>' + pinOptionsHtml();
+}
+
+function pinOptionsHtml(selectedId){
+  return (window._pins || []).map(p =>
+    `<option value="${p.id}" ${String(p.id)===String(selectedId)?'selected':''}>${escHtml(p.title)} (${p.pin_type})</option>`
+  ).join('');
 }
 
 async function deletePin(id){
@@ -163,14 +183,74 @@ async function saveEditPin(id){
 
 async function loadAds(){
   const rows = await fetch('/api/admin/ads').then(r => r.json());
+  window._ads = rows;
   document.getElementById('adsList').innerHTML = rows.map(a => `
     <div style="width:180px;border:1px solid var(--line);border-radius:8px;padding:8px;background:#fff">
-      <img src="${a.image_path}" alt="" style="width:100%;height:90px;object-fit:cover;border-radius:6px;display:block">
+      <img src="${a.image_path}" alt="" style="width:100%;height:90px;object-fit:contain;border-radius:6px;display:block;background:#f4f4f4">
       <div style="font-size:12px;margin-top:6px;min-height:16px">${a.title || ''}</div>
-      <div style="font-size:11px;color:var(--muted);word-break:break-all">${a.link_url || ''}</div>
+      <div style="font-size:11px;color:var(--muted);word-break:break-all">${adLinkSummary(a)}</div>
+      <div id="adLinkEdit${a.id}"></div>
+      <button class="btn-sm" style="margin-top:6px;width:100%" onclick="editAdLink(${a.id})">Edit link</button>
       <button class="btn-sm danger" style="margin-top:6px;width:100%" onclick="deleteAd(${a.id})">Delete</button>
     </div>
   `).join('') || '<div style="color:var(--muted);font-size:13px">No ads yet.</div>';
+}
+
+function adLinkSummary(a){
+  if (a.link_pin_id) {
+    const p = (window._pins || []).find(x => x.id === a.link_pin_id);
+    return 'Pin: ' + (p ? escHtml(p.title) : ('#' + a.link_pin_id));
+  }
+  if (a.link_url) return escHtml(a.link_url);
+  return 'No link';
+}
+
+function editAdLink(id){
+  const a = (window._ads || []).find(x => x.id === id);
+  if (!a) return;
+  const curType = a.link_pin_id ? 'pin' : (a.link_url ? 'url' : '');
+  document.getElementById('adLinkEdit' + id).innerHTML = `
+    <div style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px">
+      <select id="e_adLinkType${id}" style="width:100%;margin-bottom:4px">
+        <option value="" ${curType===''?'selected':''}>No link</option>
+        <option value="url" ${curType==='url'?'selected':''}>Web page</option>
+        <option value="pin" ${curType==='pin'?'selected':''}>Map pin</option>
+      </select>
+      <input id="e_adLinkUrl${id}" placeholder="https://..." value="${curType==='url' ? escHtml(a.link_url||'') : ''}" style="width:100%;margin-bottom:4px;${curType==='url'?'':'display:none'}">
+      <select id="e_adLinkPin${id}" style="width:100%;margin-bottom:4px;${curType==='pin'?'':'display:none'}">
+        <option value="">Choose a pin…</option>${pinOptionsHtml(a.link_pin_id)}
+      </select>
+      <button class="btn-sm" style="width:100%" onclick="saveAdLink(${id})">Save link</button>
+    </div>
+  `;
+  document.getElementById('e_adLinkType' + id).addEventListener('change', (e) => {
+    const v = e.target.value;
+    document.getElementById('e_adLinkUrl' + id).style.display = v === 'url' ? '' : 'none';
+    document.getElementById('e_adLinkPin' + id).style.display = v === 'pin' ? '' : 'none';
+  });
+}
+
+async function saveAdLink(id){
+  const type = document.getElementById('e_adLinkType' + id).value;
+  const body = {};
+  if (type === 'url') {
+    body.link_url = document.getElementById('e_adLinkUrl' + id).value;
+    body.link_pin_id = null;
+  } else if (type === 'pin') {
+    const pinId = document.getElementById('e_adLinkPin' + id).value;
+    if (!pinId) { alert('Choose a pin to link to.'); return; }
+    body.link_pin_id = pinId;
+  } else {
+    body.link_url = '';
+    body.link_pin_id = null;
+  }
+  const res = await fetch('/api/admin/ads/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || 'Could not save link.');
+    return;
+  }
+  loadAds();
 }
 
 async function deleteAd(id){
@@ -178,6 +258,12 @@ async function deleteAd(id){
   await fetch('/api/admin/ads/' + id, {method:'DELETE'});
   loadAds();
 }
+
+document.getElementById('adLinkType').addEventListener('change', () => {
+  const v = document.getElementById('adLinkType').value;
+  document.getElementById('adLinkUrlWrap').style.display = v === 'url' ? '' : 'none';
+  document.getElementById('adLinkPinWrap').style.display = v === 'pin' ? '' : 'none';
+});
 
 document.getElementById('adAddBtn').addEventListener('click', async () => {
   const fileInput = document.getElementById('adImage');
@@ -188,10 +274,20 @@ document.getElementById('adAddBtn').addEventListener('click', async () => {
     msg.className = 'error-msg';
     return;
   }
+  const linkType = document.getElementById('adLinkType').value;
+  if (linkType === 'pin' && !document.getElementById('adLinkPin').value) {
+    msg.textContent = 'Choose a pin to link to.';
+    msg.className = 'error-msg';
+    return;
+  }
   const fd = new FormData();
   fd.append('image', fileInput.files[0]);
   fd.append('title', document.getElementById('adTitle').value);
-  fd.append('link_url', document.getElementById('adLink').value);
+  if (linkType === 'url') {
+    fd.append('link_url', document.getElementById('adLink').value);
+  } else if (linkType === 'pin') {
+    fd.append('link_pin_id', document.getElementById('adLinkPin').value);
+  }
   const res = await fetch('/api/admin/ads', {method:'POST', body: fd});
   const data = await res.json();
   if (res.ok) {
@@ -200,6 +296,10 @@ document.getElementById('adAddBtn').addEventListener('click', async () => {
     fileInput.value = '';
     document.getElementById('adTitle').value = '';
     document.getElementById('adLink').value = '';
+    document.getElementById('adLinkType').value = '';
+    document.getElementById('adLinkPin').value = '';
+    document.getElementById('adLinkUrlWrap').style.display = 'none';
+    document.getElementById('adLinkPinWrap').style.display = 'none';
     loadAds();
   } else {
     msg.textContent = data.error || 'Could not add ad.';
@@ -310,7 +410,7 @@ async function loadChatMessages(){
 
 (async () => {
   if (await requireAdmin()) {
-    loadCodes(); loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned();
+    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned();
     setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); }, 10000);
   }
 })();
