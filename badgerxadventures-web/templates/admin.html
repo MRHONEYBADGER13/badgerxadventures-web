@@ -134,6 +134,7 @@ async function loadPins(){
       <td>${p.owner_email || '(admin)'}</td>
       <td>
         <button class="btn-sm" onclick="editPin(${p.id})">Edit</button>
+        ${p.owner_id ? `<button class="btn-sm" onclick="sendOwnerReset(${p.owner_id}, this)">Reset password</button>` : ''}
         <button class="btn-sm danger" onclick="deletePin(${p.id})">Delete</button>
       </td>
     </tr>
@@ -153,6 +154,25 @@ async function deletePin(id){
   if (!confirm('Delete this pin?')) return;
   await fetch('/api/admin/pins/' + id, {method:'DELETE'});
   loadPins();
+}
+
+async function sendOwnerReset(ownerId, btn){
+  if (!confirm('Email this owner a link to reset their password?')) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const res = await fetch('/api/admin/owners/' + ownerId + '/send-reset', {method:'POST'});
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      alert('Reset email sent.');
+    } else {
+      alert(data.error || 'Could not send the reset email.');
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 function editPin(id){
