@@ -42,6 +42,10 @@ def _migrate(conn):
     if "y" not in loc_cols:
         conn.execute("ALTER TABLE chat_locations ADD COLUMN y REAL")
 
+    ad_cols = {row["name"] for row in conn.execute("PRAGMA table_info(ads)")}
+    if "link_pin_id" not in ad_cols:
+        conn.execute("ALTER TABLE ads ADD COLUMN link_pin_id INTEGER")
+
 
 def row_to_dict(row):
     return dict(row) if row is not None else None
