@@ -45,7 +45,7 @@ body::after{content:"";position:fixed;left:0;top:var(--sceneh);bottom:0;width:ca
 h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.01em;text-wrap:balance}
 .gl{width:1em;height:1em;display:block;flex:none}
 
-#app{height:100%;min-height:560px;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:10px;max-width:1500px;margin-inline:auto}
+#app{height:100%;min-height:560px;display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:10px;max-width:1500px;margin-inline:auto}
 
 /* header */
 .top{display:flex;align-items:center;gap:10px 12px;flex-wrap:wrap}
@@ -350,18 +350,18 @@ svg[data-hi="1"] .sr-l,.sr-l.sel{display:inline}
 .fbar{position:sticky;bottom:0;background:var(--card);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
 
 /* lake conditions */
-.wx{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);min-width:0}
-.wxh{display:flex;align-items:center;gap:2px 14px;flex-wrap:wrap;width:100%;padding:9px 14px;border:0;background:transparent;text-align:left;border-radius:16px}
-.wxt{display:inline-flex;align-items:center;gap:8px;font:800 16px var(--display);letter-spacing:-.01em}
-.wxt .gl{color:var(--water-text);font-size:18px}
+.wxbtn{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:3;display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 14px 0 10px;border-radius:999px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);font-weight:700;font-size:13px;color:var(--ink);max-width:calc(100% - 24px)}
+.wxbtn .gl{font-size:16px;color:var(--water-text);flex:none}
+.wxbtn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wxbtn:hover{border-color:var(--water-deep)}
+[data-view="map"][data-sheet="1"] .wxbtn{display:none}
+#wxview{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column}
+.wxsumrow{display:flex;align-items:center;gap:2px 14px;flex-wrap:wrap;padding:4px 2px 0}
 .wxs{font-size:13px}
 .wxs b{font-weight:700;font-variant-numeric:tabular-nums}
-.wxa{margin-left:auto;color:var(--muted);font-size:12px;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wxa{color:var(--muted);font-size:12px;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
 .wxa .pill{font-size:11px;padding:1px 8px}
-.chev{width:18px;height:18px;flex:none;color:var(--muted);transition:transform .2s;order:9;margin-left:-6px}
-.wx[data-open="0"] .chev{transform:rotate(-90deg)}
-.wxbody{padding:0 14px 10px}
-.wxcards{display:flex;gap:10px;overflow-x:auto;padding:2px 1px 6px;scroll-snap-type:x proximity;scrollbar-width:thin}
+.wxcards{display:flex;gap:10px;overflow-x:auto;padding:8px 1px 6px;scroll-snap-type:x proximity;scrollbar-width:thin}
 .wxc{flex:1 1 200px;min-width:200px;max-width:330px;scroll-snap-align:start;display:flex;flex-direction:column;gap:4px;text-align:left;border:1px solid var(--line);background:var(--field);border-radius:12px;padding:9px 12px 10px}
 .wxc:hover{border-color:var(--water-deep)}
 .wxn{font:800 14.5px var(--display);letter-spacing:-.01em;display:flex;align-items:center;gap:8px;justify-content:space-between}
@@ -378,7 +378,7 @@ svg[data-hi="1"] .sr-l,.sr-l.sel{display:inline}
 .wfc em{font-style:normal;display:inline-flex;align-items:center;gap:3px;color:var(--water-text);font-weight:500}
 .wfc em .gl{font-size:10px}
 .wxfoot{margin:4px 2px 0;color:var(--muted);font-size:11.5px;max-width:120ch}
-.wx[data-stale="1"] .wnow b{opacity:.6}
+#wxview[data-stale="1"] .wnow b{opacity:.6}
 
 
 /* load screen */
@@ -462,13 +462,10 @@ a.btn{color:var(--ink);text-decoration:none}
   .modes button{flex:1;justify-content:center}
   .search{order:5;flex:1 1 0;min-width:0}
   .add{order:6;flex:none;padding:0 14px}
-  #app{grid-template-rows:auto auto minmax(0,1fr) auto auto}
+  #app{grid-template-rows:auto auto minmax(0,1fr) auto}
   .wxc{flex-basis:226px;min-width:226px}
-  .wxh{padding:8px 12px}
-  .wxt{font-size:15px;flex:1}
-  .chev{order:1;margin-left:0}
-  .wxs,.wxa{order:2;flex-basis:100%;margin-left:0}
-  .wxbody{padding:0 12px 8px;max-height:36vh;overflow-y:auto;overscroll-behavior:contain}
+  .wxsumrow{padding:8px 12px 0}
+  .lc-body.wxbody{padding:0 12px 10px}
   .stage{display:block;position:relative}
   .mapwrap{position:absolute;inset:0}
   .stage{overflow:hidden;border-radius:16px}
@@ -820,6 +817,7 @@ a.btn{color:var(--ink);text-decoration:none}
       <div class="avpick" id="avpick" role="dialog" aria-label="Choose your marker" hidden></div>
       <div class="scale" aria-hidden="true"><div class="bar" id="bar"></div><span id="barlbl"></span></div>
       <div class="note" id="mapnote">Shoreline from USGS data &middot; roads approximate</div>
+      <button type="button" class="wxbtn" id="wxbtn" hidden><svg class="gl" aria-hidden="true"><use href="#g-drop"/></svg><span id="wxbtnsum">Lake conditions</span></button>
       <button class="fullback" id="fullback" type="button"><svg aria-hidden="true"><use href="#g-back"/></svg>Back</button>
       <div class="fullcard" id="fullcard" hidden></div>
       <div class="poicard" id="poicard" hidden></div>
@@ -833,18 +831,20 @@ a.btn{color:var(--ink);text-decoration:none}
     </aside>
   </main>
 
-  <section class="wx" id="wxbox" aria-label="Lake conditions" data-open="1" hidden>
-    <button type="button" class="wxh" id="wxtog" aria-expanded="true" aria-controls="wxbody">
-      <span class="wxt"><svg class="gl" aria-hidden="true"><use href="#g-drop"/></svg>Lake conditions</span>
-      <span class="wxs" id="wxsum"></span>
-      <span class="wxa" id="wxage"></span>
-      <svg class="chev" aria-hidden="true"><use href="#g-chev"/></svg>
-    </button>
-    <div class="wxbody" id="wxbody">
+  <div id="wxview" aria-label="Lake conditions" hidden>
+    <div class="lc-head">
+      <button type="button" class="btn sm" id="wx-back">&larr; Back to map</button>
+      <h2><svg class="gl" aria-hidden="true" style="width:16px;height:16px;vertical-align:-3px;margin-right:6px"><use href="#g-drop"/></svg>Lake conditions</h2>
+    </div>
+    <div class="lc-body wxbody" id="wxbody">
+      <div class="wxsumrow">
+        <span class="wxs" id="wxsum"></span>
+        <span class="wxa" id="wxage"></span>
+      </div>
       <div class="wxcards" id="wxcards"></div>
       <p class="wxfoot" id="wxfoot"></p>
     </div>
-  </section>
+  </div>
 
   <nav class="tabs" aria-label="Switch view">
     <button type="button" id="tab-map" aria-pressed="true">Map</button>
