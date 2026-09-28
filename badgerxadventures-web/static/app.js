@@ -17391,9 +17391,12 @@
     body.innerHTML = lcMessages.map(function (m) {
       const mine = youLower && m.name.toLowerCase() === youLower;
       const mentioned = youLower && Array.isArray(m.mentions) && m.mentions.indexOf(youLower) !== -1;
-      const cls = "lc-msg" + (mine ? " mine" : "") + (mentioned && !mine ? " mentioned" : "");
+      const isBadger = m.name.toLowerCase() === "badger";
+      const cls = "lc-msg" + (mine ? " mine" : "") + (mentioned && !mine ? " mentioned" : "") +
+        (isBadger ? " lc-badger" : "");
+      const nameCls = "lc-name" + (isBadger ? " lc-badger-name" : "");
       const boat = lcOnLakeSet.has(m.name.toLowerCase()) ? LC_BOAT_SVG : "";
-      return '<div class="' + cls + '"><span class="lc-name">' + boat + lcEscape(m.name) +
+      return '<div class="' + cls + '"><span class="' + nameCls + '">' + boat + lcEscape(m.name) +
         '</span><span class="lc-text">' + lcRenderText(m.text, m.mentions) + "</span></div>";
     }).join("");
     body.scrollTop = body.scrollHeight;
