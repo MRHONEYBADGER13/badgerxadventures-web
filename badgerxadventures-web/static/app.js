@@ -15635,6 +15635,8 @@
       .filter((v) => typeof v === "number");
     if (WX.water && WX.water.f != null)
       return "Lake conditions \u00B7 Water " + Math.round(WX.water.f) + "\u00B0F";
+    if (WX.lake && WX.lake.elevFt != null)
+      return "Lake conditions \u00B7 " + WX.lake.elevFt.toFixed(1) + " ft";
     if (temps.length) {
       const lo = Math.round(Math.min(...temps)),
         hi = Math.round(Math.max(...temps));
@@ -15664,6 +15666,19 @@
         "Water ",
         h("b", { text: Math.round(WX.water.f) + "\u00B0F" }),
         " " + (WX.water.label || ""),
+      );
+    if (WX.lake && WX.lake.elevFt != null)
+      sum.append(
+        (sum.childNodes.length ? " \u00B7 " : "") + "Lake level ",
+        h("b", { text: WX.lake.elevFt.toFixed(1) + " ft" }),
+        WX.lake.belowFullFt != null
+          ? " (" +
+            (WX.lake.belowFullFt >= 0
+              ? WX.lake.belowFullFt.toFixed(1) + " ft below full pool"
+              : Math.abs(WX.lake.belowFullFt).toFixed(1) +
+                " ft above full pool") +
+            ")"
+          : "",
       );
     if (temps.length) {
       const lo = Math.round(Math.min(...temps)),
