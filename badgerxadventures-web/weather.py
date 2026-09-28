@@ -12,6 +12,15 @@ Water temperature has no reliable free public API (the original design used
 a paid/scraped source called LakeMonster) -- we simply omit the "water" key
 when we don't have a number, and the front end already handles that.
 
+Lake level (pool elevation) *does* have a reliable free public API: NOAA's
+National Water Prediction Service (api.water.noaa.gov -- no API key needed,
+same NWS family as the weather.gov calls above). Gauge WLCK2 ("Cumberland
+River at Lake Cumberland") is the AHPS gauge for Wolf Creek Dam and reports
+the lake's current pool elevation in feet as its "primary" observation. We
+compare that to Lake Cumberland's published full (summer) pool elevation of
+723 ft to show how far up or down the lake is. Same omit-the-key-on-failure
+approach as water temperature.
+
 Results are cached in memory for CACHE_TTL seconds so a burst of page loads
 doesn't hammer NWS, and a request that fails reuses the last good cache
 (marking it stale) rather than showing nothing.
@@ -24,6 +33,9 @@ import json
 CACHE_TTL = 20 * 60  # 20 minutes
 STATION = "KSME"  # Somerset-Pulaski County Airport
 USER_AGENT = "BADGERxADVENTURES/1.0 (contact: mrxbadger6@yahoo.com)"
+
+LAKE_GAUGE = "WLCK2"  # NWS AHPS gauge: Cumberland River at Lake Cumberland (Wolf Creek Dam)
+LAKE_FULL_POOL_FT = 723.0  # published full/summer pool elevation, Lake Cumberland
 
 PLACES = [
     {"id": "dam", "name": "Wolf Creek Dam", "lat": 36.868, "lon": -85.061},
@@ -108,6 +120,22 @@ def _fetch_forecast(lat, lon):
     return out
 
 
+def _fetch_lake_level():
+    """Current Lake Cumberland pool elevation from NOAA's NWPS gauge API."""
+    data = _get_json(f"https://api.water.noaa.gov/nwps/v1/gauges/{LAKE_GAUGE}")
+    obs = (data.get("status") or {}).get("observed") or {}
+    elev = obs.get("primary")
+    if elev is None or elev <= -900:  # NWPS uses -999 as a "no data" sentinel
+        return None
+    return {
+        "elevFt": round(elev, 1),
+        "asOf": obs.get("validTime"),
+        "fullPoolFt": LAKE_FULL_POOL_FT,
+        "belowFullFt": round(LAKE_FULL_POOL_FT - elev, 1),
+        "src": "NWS gauge WLCK2",
+    }
+
+
 def _build_fresh():
     now = _fetch_now()
     places = []
@@ -123,7 +151,11 @@ def _build_fresh():
             "now": now,
             "fc": fc,
         })
-    return {
+    try:
+        lake = _fetch_lake_level()
+    except Exception:
+        lake = None
+    result = {
         "v": 1,
         "asOf": int(time.time() * 1000),
         "note": "Air and forecasts: National Weather Service. \"Now\" is from "
@@ -131,6 +163,9 @@ def _build_fresh():
                 "every 20 minutes.",
         "places": places,
     }
+    if lake:
+        result["lake"] = lake
+    return result
 
 
 def get_weather():
