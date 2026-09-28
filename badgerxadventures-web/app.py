@@ -11,6 +11,7 @@ info and photos -- but never its location, which is set once, server-side,
 and can only ever be moved again by an admin. Only the admin account can
 edit or delete any pin, and only the admin can generate invite codes.
 """
+import hashlib
 import json
 import os
 import smtplib
@@ -38,6 +39,11 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 SMTP_USER = os.environ.get("SMTP_USER", "badgerxadventures@gmail.com")
 SMTP_PASS = os.environ.get("SMTP_PASS")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
+
+# Fixed, non-secret salt for the site-visit counter below -- just enough to
+# keep a hashed IP from being trivially looked up in a plain SHA-256 rainbow
+# table. Doesn't need to be a real secret or an env var.
+VISIT_SALT = "badgerxadventures-visit-salt-v1"
 
 
 def send_email(to_addr, subject, text_body):
@@ -81,6 +87,33 @@ def close_db(exc):
     d = g.pop("db", None)
     if d is not None:
         d.close()
+
+
+def _client_ip():
+    # Render sits behind a proxy -- the real visitor IP is the first hop in
+    # X-Forwarded-For when it's present, falling back to the direct address.
+    fwd = request.headers.get("X-Forwarded-For", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.remote_addr or ""
+
+
+def record_visit():
+    """Counts a unique visitor once per UTC calendar day, for the admin
+    dashboard's visitor counters. Only the main map page calls this -- never
+    admin or API routes -- and only a salted hash of the visitor's IP is
+    ever stored, never the IP itself."""
+    ip = _client_ip()
+    if not ip:
+        return
+    ip_hash = hashlib.sha256((VISIT_SALT + ip).encode("utf-8")).hexdigest()
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    conn = get_db()
+    conn.execute(
+        "INSERT OR IGNORE INTO site_visits (day, ip_hash) VALUES (?, ?)",
+        (day, ip_hash),
+    )
+    conn.commit()
 
 
 def current_owner_id():
@@ -278,6 +311,7 @@ def valid_xy(x, y):
 
 @app.route("/")
 def index():
+    record_visit()
     role = compute_role()
     pins, stays = fetch_docs()
     state = {"v": 1, "pins": pins, "stays": stays}
@@ -613,6 +647,16 @@ def api_admin_logout():
     resp = jsonify({"ok": True})
     resp.delete_cookie("admin_session")
     return resp
+
+
+@app.route("/api/admin/visits", methods=["GET"])
+@admin_required
+def api_admin_visits():
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(DISTINCT ip_hash) AS n FROM site_visits").fetchone()["n"]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_n = conn.execute("SELECT COUNT(*) AS n FROM site_visits WHERE day = ?", (today,)).fetchone()["n"]
+    return jsonify({"total": total, "today": today_n})
 
 
 @app.route("/api/admin/codes", methods=["GET"])
