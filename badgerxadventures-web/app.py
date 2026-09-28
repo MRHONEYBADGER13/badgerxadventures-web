@@ -736,8 +736,25 @@ def ad_to_dict(row):
         "image_path": row["image_path"],
         "title": row["title"],
         "link_url": row["link_url"],
+        "link_pin_id": row["link_pin_id"],
         "sort_order": row["sort_order"],
     }
+
+
+def _validate_ad_pin(conn, raw_pin_id):
+    """None if raw_pin_id is blank, an int pin id if it matches a real pin,
+    or False if a non-blank value was given that doesn't match any pin."""
+    if raw_pin_id is None:
+        return None
+    raw_pin_id = str(raw_pin_id).strip()
+    if not raw_pin_id:
+        return None
+    try:
+        pin_id = int(raw_pin_id)
+    except (TypeError, ValueError):
+        return False
+    exists = conn.execute("SELECT 1 FROM pins WHERE id = ?", (pin_id,)).fetchone()
+    return pin_id if exists else False
 
 
 @app.route("/api/ads")
@@ -764,6 +781,12 @@ def api_admin_ads_create():
         return jsonify({"error": "Please upload an image file."}), 400
     title = (request.form.get("title") or "").strip()
     link_url = (request.form.get("link_url") or "").strip()
+    conn = get_db()
+    link_pin_id = _validate_ad_pin(conn, request.form.get("link_pin_id"))
+    if link_pin_id is False:
+        return jsonify({"error": "That pin doesn't exist."}), 400
+    if link_pin_id:
+        link_url = ""  # a pin link and a URL link are mutually exclusive; pin wins
     try:
         sort_order = int(request.form.get("sort_order") or 0)
     except ValueError:
@@ -772,10 +795,9 @@ def api_admin_ads_create():
         image_path = _save_photo(file)
     except Exception:
         return jsonify({"error": "Couldn't read that image."}), 400
-    conn = get_db()
     cur = conn.execute(
-        "INSERT INTO ads (image_path, title, link_url, sort_order) VALUES (?, ?, ?, ?)",
-        (image_path, title, link_url, sort_order),
+        "INSERT INTO ads (image_path, title, link_url, link_pin_id, sort_order) VALUES (?, ?, ?, ?, ?)",
+        (image_path, title, link_url, link_pin_id, sort_order),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM ads WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -792,13 +814,24 @@ def api_admin_ads_update(ad_id):
     data = request.get_json(force=True) or {}
     title = data.get("title", row["title"])
     link_url = data.get("link_url", row["link_url"])
+    if isinstance(link_url, str):
+        link_url = link_url.strip()
+    link_pin_id = row["link_pin_id"]
+    if "link_pin_id" in data:
+        link_pin_id = _validate_ad_pin(conn, data.get("link_pin_id"))
+        if link_pin_id is False:
+            return jsonify({"error": "That pin doesn't exist."}), 400
+        if link_pin_id:
+            link_url = ""  # a pin link and a URL link are mutually exclusive; pin wins
+    elif "link_url" in data and link_url:
+        link_pin_id = None  # switching to a URL link clears any pin link
     try:
         sort_order = int(data.get("sort_order", row["sort_order"]))
     except (TypeError, ValueError):
         sort_order = row["sort_order"]
     conn.execute(
-        "UPDATE ads SET title = ?, link_url = ?, sort_order = ? WHERE id = ?",
-        (title, link_url, sort_order, ad_id),
+        "UPDATE ads SET title = ?, link_url = ?, link_pin_id = ?, sort_order = ? WHERE id = ?",
+        (title, link_url, link_pin_id, sort_order, ad_id),
     )
     conn.commit()
     return jsonify({"ok": True})
