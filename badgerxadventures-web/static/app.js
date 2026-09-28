@@ -12881,8 +12881,24 @@
     )
       tap(e, d.target);
     ptrs.delete(e.pointerId);
-    if (ptrs.size < 2) pinch = null;
-    if (ptrs.size === 0) drag = null;
+    if (ptrs.size === 0) {
+      pinch = null;
+      drag = null;
+    } else if (ptrs.size === 1) {
+      // A pinch just ended (or a stray extra finger lifted) and one finger
+      // is still down. Restart the drag from where that finger actually is
+      // right now, using the current view -- reusing the old drag start
+      // point (from a different finger, captured before any zooming) made
+      // the map jump the instant the remaining finger moved even slightly.
+      pinch = null;
+      const [pos] = [...ptrs.values()];
+      drag = { sx: pos.x, sy: pos.y, vx: view.x, vy: view.y, moved: true, target: null };
+    } else {
+      // still 2+ fingers down (a stray extra finger lifted mid-pinch) --
+      // recompute the pinch anchor fresh so it doesn't use a distance
+      // captured before the extra finger interfered.
+      pinch = { d: dist(), w: view.w };
+    }
   };
   svg.addEventListener("pointerup", endPtr);
   svg.addEventListener("pointercancel", endPtr);
