@@ -86,19 +86,35 @@
       Messages disappear 5 hours after posting; a guest's claimed name frees up 7 days later.
       Business/stay owners always chat under their pin's name, and that name is reserved for them.
       A kick lasts 5 minutes and then lifts on its own; a ban stays in place until you unban them.
+      "Ban IP" is stronger still -- it blocks that IP address from the entire site, not just chat,
+      and survives them clearing cookies for a fresh name.
     </p>
     <h4 style="margin-bottom:6px">Active names</h4>
     <table class="admin-table" id="chatNamesTable">
-      <thead><tr><th>Name</th><th>Type</th><th></th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Type</th><th>IP</th><th></th><th></th></tr></thead>
       <tbody></tbody>
     </table>
     <h4 style="margin:16px 0 6px">Kicked &amp; banned</h4>
     <table class="admin-table" id="chatBannedTable">
-      <thead><tr><th>Name</th><th>Type</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Type</th><th>IP</th><th>Status</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
     <h4 style="margin:16px 0 6px">Messages</h4>
     <div id="chatMessages" style="max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 10px"></div>
+    <h4 style="margin:16px 0 6px">Banned IPs</h4>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 8px">
+      Blocked from the whole site until you unban them here. Add one directly if you have an IP
+      from somewhere other than the lists above.
+    </p>
+    <div class="inline-form">
+      <div><label>IP address</label><input id="manualBanIp" placeholder="203.0.113.5"></div>
+      <div><label>Label (optional)</label><input id="manualBanLabel" placeholder="e.g. spammer"></div>
+      <button class="btn-sm danger" id="manualBanBtn">Ban IP</button>
+    </div>
+    <table class="admin-table" id="bannedIpsTable">
+      <thead><tr><th>IP</th><th>Label</th><th>Banned</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
   </div>
 <script>
 async function requireAdmin(){
@@ -356,6 +372,10 @@ function escHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+function ipCell(ip){
+  return ip ? `<code style="font-size:12px">${escHtml(ip)}</code>` : '<span style="color:var(--muted)">—</span>';
+}
+
 async function loadChatNames(){
   const rows = await fetch('/api/admin/chat/names').then(r => r.json());
   const tbody = document.querySelector('#chatNamesTable tbody');
@@ -363,17 +383,19 @@ async function loadChatNames(){
     <tr>
       <td>${escHtml(n.name)}</td>
       <td><span class="pill">${escHtml(n.kind)}</span></td>
+      <td>${ipCell(n.ip)}</td>
       <td>${n.banned ? '<span style="color:#B3261E;font-weight:700">banned</span>' : ''}</td>
       <td>
         ${n.banned
           ? `<button class="btn-sm" data-act="unban" data-name="${escHtml(n.name)}">Unban</button>`
           : `<button class="btn-sm danger" data-act="kick" data-name="${escHtml(n.name)}">Kick</button>
              <button class="btn-sm danger" data-act="ban" data-name="${escHtml(n.name)}">Ban</button>`}
+        ${n.ip ? `<button class="btn-sm danger" data-act="banip" data-name="${escHtml(n.name)}">Ban IP</button>` : ''}
         <button class="btn-sm" data-act="warn" data-name="${escHtml(n.name)}">Warn</button>
         <button class="btn-sm danger" data-act="delmsgs" data-name="${escHtml(n.name)}">Del msgs</button>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="4" style="color:var(--muted)">No one is chatting right now.</td></tr>';
+  `).join('') || '<tr><td colspan="5" style="color:var(--muted)">No one is chatting right now.</td></tr>';
 }
 
 async function loadChatBanned(){
@@ -390,12 +412,41 @@ async function loadChatBanned(){
       <tr>
         <td>${escHtml(b.name)}</td>
         <td><span class="pill">${escHtml(b.kind)}</span></td>
+        <td>${ipCell(b.ip)}</td>
         <td>${escHtml(status)}</td>
-        <td><button class="btn-sm" data-act="unban" data-name="${escHtml(b.name)}">Add back</button></td>
+        <td>
+          <button class="btn-sm" data-act="unban" data-name="${escHtml(b.name)}">Add back</button>
+          ${b.ip ? `<button class="btn-sm danger" data-act="banip" data-name="${escHtml(b.name)}">Ban IP</button>` : ''}
+        </td>
       </tr>
     `;
-  }).join('') || '<tr><td colspan="4" style="color:var(--muted)">No one is currently kicked or banned.</td></tr>';
+  }).join('') || '<tr><td colspan="5" style="color:var(--muted)">No one is currently kicked or banned.</td></tr>';
 }
+
+async function loadBannedIps(){
+  const rows = await fetch('/api/admin/banned-ips').then(r => r.json());
+  const tbody = document.querySelector('#bannedIpsTable tbody');
+  tbody.innerHTML = rows.map(b => `
+    <tr>
+      <td><code style="font-size:12px">${escHtml(b.ip)}</code></td>
+      <td>${escHtml(b.label || '')}</td>
+      <td>${new Date(b.at).toLocaleDateString()}</td>
+      <td><button class="btn-sm" data-act="unbanip" data-ip="${escHtml(b.ip)}">Unban</button></td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" style="color:var(--muted)">No IPs are banned.</td></tr>';
+}
+
+document.getElementById('manualBanBtn').addEventListener('click', async () => {
+  const ip = document.getElementById('manualBanIp').value.trim();
+  const label = document.getElementById('manualBanLabel').value.trim();
+  if (!ip) return;
+  const res = await fetch('/api/admin/banned-ips', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ip, label})});
+  if (res.ok) {
+    document.getElementById('manualBanIp').value = '';
+    document.getElementById('manualBanLabel').value = '';
+    loadBannedIps();
+  }
+});
 
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-act]');
@@ -416,6 +467,18 @@ document.addEventListener('click', async (e) => {
     await fetch('/api/admin/chat/unban', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
     loadChatNames();
     loadChatBanned();
+  } else if (act === 'banip') {
+    if (!confirm('Permanently block this IP address from the ENTIRE site (not just chat)? This stays in place until you unban it from the Banned IPs list.')) return;
+    const res = await fetch('/api/admin/chat/ban-ip', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(data.error || 'Could not ban that IP.'); return; }
+    loadChatNames();
+    loadChatBanned();
+    loadBannedIps();
+  } else if (act === 'unbanip') {
+    const ip = btn.dataset.ip;
+    await fetch('/api/admin/banned-ips/' + encodeURIComponent(ip), {method:'DELETE'});
+    loadBannedIps();
   } else if (act === 'warn') {
     const text = prompt('Private warning for "' + name + '" (only they will see this):');
     if (!text) return;
@@ -449,7 +512,7 @@ async function loadChatMessages(){
 
 (async () => {
   if (await requireAdmin()) {
-    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits();
+    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits(); loadBannedIps();
     setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); }, 10000);
   }
 })();
