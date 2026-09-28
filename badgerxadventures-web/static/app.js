@@ -15739,6 +15739,17 @@
   function stopAdAutoplay() {
     if (adTimer) { clearInterval(adTimer); adTimer = null; }
   }
+  function goToAdPin(pinId) {
+    if (!pinId) return;
+    if (S.pins && S.pins.has(pinId)) {
+      setMode("lake");
+      select(pinId, { fly: true });
+    } else if (S.stays && S.stays.has(pinId)) {
+      setMode("stays");
+      select(pinId, { fly: true });
+    }
+  }
+
   async function refreshAds() {
     const el = $("#adbanner");
     const track = $("#adtrack");
@@ -15759,11 +15770,23 @@
         const img = `<img src="${a.image_path}" alt="${(a.title || "Advertisement").replace(/"/g, "&quot;")}" loading="lazy">`;
         const label = a.title ? `<span class="adlabel">${a.title}</span>` : "";
         const inner = img + label;
+        if (a.link_pin_id) {
+          return `<div class="adcard adcard-pinlink" data-pin-id="${a.link_pin_id}" role="button" tabindex="0">${inner}</div>`;
+        }
         return a.link_url
           ? `<a class="adcard" href="${a.link_url}" target="_blank" rel="noopener noreferrer">${inner}</a>`
           : `<div class="adcard">${inner}</div>`;
       };
       track.innerHTML = ads.map(cardHtml).join("");
+      track.onclick = (e) => {
+        const card = e.target.closest(".adcard-pinlink");
+        if (card) goToAdPin(parseInt(card.dataset.pinId, 10));
+      };
+      track.onkeydown = (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        const card = e.target.closest(".adcard-pinlink");
+        if (card) { e.preventDefault(); goToAdPin(parseInt(card.dataset.pinId, 10)); }
+      };
 
       let adIndex = 0;
       const goToAd = (i) => {
