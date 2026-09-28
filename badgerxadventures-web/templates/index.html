@@ -90,6 +90,24 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.01em;text-wrap:bal
 .lc-msg .lc-text{font-size:14px;line-height:1.35;white-space:pre-wrap;word-break:break-word;color:inherit}
 .lc-msg .lc-text .lc-at{font-weight:800;color:var(--accent)}
 .lc-msg.mine .lc-text .lc-at{color:#FFE9A8}
+.lc-msg.lc-badger{border-color:transparent;animation:lcBadgerGlow 1.1s ease-in-out infinite alternate}
+.lc-msg.lc-badger.mine{background:var(--card);color:inherit}
+.lc-msg.lc-badger .lc-text .lc-at{color:var(--accent)}
+@keyframes lcBadgerGlow{
+  from{box-shadow:0 0 6px 1px rgba(255,64,64,.5),0 0 14px 3px rgba(64,140,255,.35)}
+  to{box-shadow:0 0 14px 3px rgba(255,64,64,.9),0 0 28px 9px rgba(64,140,255,.6)}
+}
+.lc-name.lc-badger-name{
+  background:linear-gradient(90deg,#ff2d2d,#ff9d00,#f5ff00,#28ff5c,#00e5ff,#3d6bff,#c13dff,#ff2d2d);
+  background-size:350% 100%;
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;
+  animation:lcBadgerRainbow .8s linear infinite;
+}
+@keyframes lcBadgerRainbow{to{background-position:350% 50%}}
+@media (prefers-reduced-motion: reduce){
+  .lc-msg.lc-badger{animation:none;box-shadow:0 0 10px 2px rgba(255,64,64,.6),0 0 20px 6px rgba(64,140,255,.4)}
+  .lc-name.lc-badger-name{animation:none;background-position:0 50%}
+}
 .lc-empty{margin:auto;color:var(--muted);font-size:13px;text-align:center}
 .lc-claim{padding:14px 12px;display:flex;flex-direction:column;gap:8px;max-width:360px;margin:auto;width:100%}
 .lc-claim input{height:40px;border:1px solid var(--line);border-radius:10px;padding:0 12px;font-size:14px;background:var(--field)}
