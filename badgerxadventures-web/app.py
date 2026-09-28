@@ -116,6 +116,32 @@ def record_visit():
     conn.commit()
 
 
+# A permanently banned IP is blocked from the whole site -- everywhere
+# except the admin dashboard itself (so an admin can never lock themselves
+# out) and static assets. This is separate from -- and stronger than -- a
+# Lake Chat ban: it survives the person clearing cookies for a fresh
+# session, since it's keyed on their IP instead.
+_IP_BAN_EXEMPT_PREFIXES = ("/admin", "/api/admin", "/static")
+
+_IP_BLOCKED_PAGE = (
+    "<!doctype html><html><body style=\"font-family:sans-serif;padding:40px;"
+    "text-align:center;color:#4A7282\"><h2>Access blocked</h2>"
+    "<p>This device has been blocked from BADGERxADVENTURES.</p></body></html>"
+)
+
+
+@app.before_request
+def _enforce_ip_ban():
+    if request.path.startswith(_IP_BAN_EXEMPT_PREFIXES):
+        return None
+    ip = _client_ip()
+    if not ip:
+        return None
+    banned = get_db().execute("SELECT 1 FROM banned_ips WHERE ip = ?", (ip,)).fetchone()
+    if banned:
+        return _IP_BLOCKED_PAGE, 403
+
+
 def current_owner_id():
     token = request.cookies.get("owner_session")
     if not token:
@@ -1215,9 +1241,9 @@ def api_chat_claim():
         return jsonify({"error": "That name belongs to a business/stay on the map."}), 409
     conn.execute("DELETE FROM chat_names WHERE session_id = ?", (sid,))
     conn.execute(
-        "INSERT INTO chat_names (name, name_lower, session_id, expires_at) "
-        "VALUES (?, ?, ?, datetime('now', '+7 days'))",
-        (name, name_lower, sid),
+        "INSERT INTO chat_names (name, name_lower, session_id, ip, expires_at) "
+        "VALUES (?, ?, ?, ?, datetime('now', '+7 days'))",
+        (name, name_lower, sid, _client_ip()),
     )
     conn.commit()
     resp = jsonify({"ok": True, "name": name})
@@ -1490,20 +1516,21 @@ def api_chat_warning_ack(warn_id):
 # ---------- admin: lake chat moderation ----------
 
 def _chat_resolve_target(conn, name):
-    """Find who currently holds this chat name: a guest claim (session_id)
-    or a business/stay owner (owner_id). Case-insensitive."""
+    """Find who currently holds this chat name: a guest claim (session_id,
+    plus the IP they claimed it from) or a business/stay owner (owner_id,
+    no IP -- they're never anonymous). Case-insensitive."""
     name_lower = (name or "").strip().lower()
-    row = conn.execute("SELECT session_id FROM chat_names WHERE name_lower = ?", (name_lower,)).fetchone()
+    row = conn.execute("SELECT session_id, ip FROM chat_names WHERE name_lower = ?", (name_lower,)).fetchone()
     if row:
-        return {"session_id": row["session_id"], "owner_id": None, "name_lower": name_lower}
+        return {"session_id": row["session_id"], "owner_id": None, "name_lower": name_lower, "ip": row["ip"]}
     row = conn.execute(
         "SELECT owner_id FROM pins WHERE pin_type IN ('business','stay') AND lower(title) = ? "
         "AND owner_id IS NOT NULL",
         (name_lower,),
     ).fetchone()
     if row:
-        return {"session_id": None, "owner_id": row["owner_id"], "name_lower": name_lower}
-    return {"session_id": None, "owner_id": None, "name_lower": name_lower}
+        return {"session_id": None, "owner_id": row["owner_id"], "name_lower": name_lower, "ip": None}
+    return {"session_id": None, "owner_id": None, "name_lower": name_lower, "ip": None}
 
 @app.route("/api/admin/chat/names")
 @admin_required
@@ -1511,7 +1538,7 @@ def api_admin_chat_names():
     conn = get_db()
     chat_cleanup(conn)
     guests = conn.execute(
-        "SELECT name, session_id, created_at, expires_at FROM chat_names ORDER BY created_at DESC"
+        "SELECT name, session_id, ip, created_at, expires_at FROM chat_names ORDER BY created_at DESC"
     ).fetchall()
     owners_rows = conn.execute(
         "SELECT p.title AS name, p.owner_id FROM pins p "
@@ -1519,11 +1546,11 @@ def api_admin_chat_names():
     ).fetchall()
     out = []
     for r in guests:
-        out.append({"name": r["name"], "kind": "guest",
+        out.append({"name": r["name"], "kind": "guest", "ip": r["ip"],
                      "banned": chat_is_banned(conn, r["session_id"], None),
                      "expires_at": r["expires_at"]})
     for r in owners_rows:
-        out.append({"name": r["name"], "kind": "owner",
+        out.append({"name": r["name"], "kind": "owner", "ip": None,
                      "banned": chat_is_banned(conn, None, r["owner_id"]),
                      "expires_at": None})
     return jsonify(out)
@@ -1569,9 +1596,9 @@ def api_admin_chat_kick():
     if not target["session_id"] and not target["owner_id"]:
         return jsonify({"error": "That name is not currently active in chat."}), 404
     conn.execute(
-        "INSERT INTO chat_bans (session_id, owner_id, name, name_lower, expires_at) "
-        f"VALUES (?, ?, ?, ?, datetime('now', '+{CHAT_KICK_MINUTES} minutes'))",
-        (target["session_id"], target["owner_id"], display_name, target["name_lower"]),
+        "INSERT INTO chat_bans (session_id, owner_id, name, name_lower, ip, expires_at) "
+        f"VALUES (?, ?, ?, ?, ?, datetime('now', '+{CHAT_KICK_MINUTES} minutes'))",
+        (target["session_id"], target["owner_id"], display_name, target["name_lower"], target["ip"]),
     )
     if target["session_id"]:
         conn.execute("DELETE FROM chat_names WHERE session_id = ?", (target["session_id"],))
@@ -1591,9 +1618,9 @@ def api_admin_chat_ban():
     if not target["session_id"] and not target["owner_id"]:
         return jsonify({"error": "That name is not currently active in chat."}), 404
     conn.execute(
-        "INSERT INTO chat_bans (session_id, owner_id, name, name_lower, expires_at) "
-        "VALUES (?, ?, ?, ?, NULL)",
-        (target["session_id"], target["owner_id"], display_name, target["name_lower"]),
+        "INSERT INTO chat_bans (session_id, owner_id, name, name_lower, ip, expires_at) "
+        "VALUES (?, ?, ?, ?, ?, NULL)",
+        (target["session_id"], target["owner_id"], display_name, target["name_lower"], target["ip"]),
     )
     if target["session_id"]:
         conn.execute("DELETE FROM chat_names WHERE session_id = ?", (target["session_id"],))
@@ -1609,12 +1636,13 @@ def api_admin_chat_banned():
     conn = get_db()
     chat_cleanup(conn)
     rows = conn.execute(
-        "SELECT name, name_lower, owner_id, created_at, expires_at FROM chat_bans ORDER BY created_at DESC"
+        "SELECT name, name_lower, owner_id, ip, created_at, expires_at FROM chat_bans ORDER BY created_at DESC"
     ).fetchall()
     return jsonify([
         {
             "name": r["name"] or r["name_lower"],
             "kind": "owner" if r["owner_id"] else "guest",
+            "ip": r["ip"],
             "at": _to_ms(r["created_at"]),
             "until": _to_ms(r["expires_at"]) if r["expires_at"] else None,
         }
@@ -1628,6 +1656,68 @@ def api_admin_chat_unban():
     name_lower = (data.get("name") or "").strip().lower()
     conn = get_db()
     conn.execute("DELETE FROM chat_bans WHERE name_lower = ?", (name_lower,))
+    conn.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/admin/chat/ban-ip", methods=["POST"])
+@admin_required
+def api_admin_chat_ban_ip():
+    """Permanently blocks this chat name's IP from the whole site (see
+    _enforce_ip_ban above) -- on top of whatever Lake Chat ban state they're
+    already in, not instead of it. Looks in chat_names first (still active),
+    then falls back to the most recent chat_bans row for that name (already
+    kicked/banned), since that's where the IP was preserved at ban time."""
+    data = request.get_json(force=True) or {}
+    display_name = (data.get("name") or "").strip()
+    conn = get_db()
+    target = _chat_resolve_target(conn, display_name)
+    ip = target.get("ip")
+    if not ip:
+        row = conn.execute(
+            "SELECT ip FROM chat_bans WHERE name_lower = ? AND ip IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (target["name_lower"],),
+        ).fetchone()
+        ip = row["ip"] if row else None
+    if not ip:
+        return jsonify({"error": "No IP address on file for that name."}), 404
+    conn.execute(
+        "INSERT INTO banned_ips (ip, label) VALUES (?, ?) "
+        "ON CONFLICT(ip) DO UPDATE SET label = excluded.label",
+        (ip, display_name),
+    )
+    conn.commit()
+    return jsonify({"ok": True, "ip": ip})
+
+@app.route("/api/admin/banned-ips", methods=["GET"])
+@admin_required
+def api_admin_banned_ips_list():
+    rows = get_db().execute(
+        "SELECT ip, label, created_at FROM banned_ips ORDER BY created_at DESC"
+    ).fetchall()
+    return jsonify([{"ip": r["ip"], "label": r["label"], "at": _to_ms(r["created_at"])} for r in rows])
+
+@app.route("/api/admin/banned-ips", methods=["POST"])
+@admin_required
+def api_admin_banned_ips_add():
+    data = request.get_json(force=True) or {}
+    ip = (data.get("ip") or "").strip()
+    label = (data.get("label") or "").strip()
+    if not ip:
+        return jsonify({"error": "An IP address is required."}), 400
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO banned_ips (ip, label) VALUES (?, ?) "
+        "ON CONFLICT(ip) DO UPDATE SET label = excluded.label",
+        (ip, label),
+    )
+    conn.commit()
+    return jsonify({"ok": True})
+
+@app.route("/api/admin/banned-ips/<ip>", methods=["DELETE"])
+@admin_required
+def api_admin_banned_ips_delete(ip):
+    conn = get_db()
+    conn.execute("DELETE FROM banned_ips WHERE ip = ?", (ip,))
     conn.commit()
     return jsonify({"ok": True})
 
