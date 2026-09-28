@@ -35,6 +35,12 @@ def _migrate(conn):
         conn.execute("ALTER TABLE chat_bans ADD COLUMN name TEXT NOT NULL DEFAULT ''")
     if "expires_at" not in cols:
         conn.execute("ALTER TABLE chat_bans ADD COLUMN expires_at TEXT")
+    if "ip" not in cols:
+        conn.execute("ALTER TABLE chat_bans ADD COLUMN ip TEXT")
+
+    chat_names_cols = {row["name"] for row in conn.execute("PRAGMA table_info(chat_names)")}
+    if "ip" not in chat_names_cols:
+        conn.execute("ALTER TABLE chat_names ADD COLUMN ip TEXT")
 
     loc_cols = {row["name"] for row in conn.execute("PRAGMA table_info(chat_locations)")}
     if "x" not in loc_cols:
