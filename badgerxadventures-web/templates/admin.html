@@ -11,6 +11,19 @@
   <nav><a href="/">View map</a><a href="#" id="logout">Log out</a></nav>
 </header>
 <div class="admin-layout">
+  <div class="admin-panel" style="grid-column:1 / -1">
+    <h3>Site visits</h3>
+    <div style="display:flex;gap:32px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:28px;font-weight:700;color:var(--accent)" id="visitsTotal">—</div>
+        <div style="font-size:12px;color:var(--muted)">visitors since launch</div>
+      </div>
+      <div>
+        <div style="font-size:28px;font-weight:700;color:var(--accent)" id="visitsToday">—</div>
+        <div style="font-size:12px;color:var(--muted)">visitors today</div>
+      </div>
+    </div>
+  </div>
   <div class="admin-panel">
     <h3>Invite codes</h3>
     <div class="inline-form">
@@ -92,6 +105,12 @@ async function requireAdmin(){
   const res = await fetch('/api/admin/codes');
   if (res.status === 401) { location.href = '/admin/login'; return false; }
   return true;
+}
+
+async function loadVisits(){
+  const data = await fetch('/api/admin/visits').then(r => r.json());
+  document.getElementById('visitsTotal').textContent = data.total;
+  document.getElementById('visitsToday').textContent = data.today;
 }
 
 async function loadCodes(){
@@ -430,7 +449,7 @@ async function loadChatMessages(){
 
 (async () => {
   if (await requireAdmin()) {
-    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned();
+    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits();
     setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); }, 10000);
   }
 })();
