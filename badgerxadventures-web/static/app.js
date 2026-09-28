@@ -15500,7 +15500,7 @@
     $("#panel").setAttribute("aria-label", st ? "Cabins and stays" : "Places");
     layers.draft.replaceChildren();
     renderWx();
-    if (st) $("#wxbox").hidden = true;
+    if (st) { $("#wxbtn").hidden = true; closeWx(); }
     setView("map");
     renderAll();
     syncChrome();
@@ -15532,14 +15532,6 @@
       hour: "numeric",
       minute: "2-digit",
     });
-  let wxOpen = null;
-  try {
-    const v = localStorage.getItem("lcp-wx");
-    if (v === "0" || v === "1") wxOpen = v === "1";
-  } catch (_) {}
-  if (wxOpen === null)
-    wxOpen = matchMedia("(min-width: 900px) and (min-height: 780px)").matches;
-
   function wxCard(p) {
     const n = p.now || {},
       lm = MAP.landmarks.find((l) => l.id === p.id),
@@ -15565,6 +15557,7 @@
         title: lm ? "Show " + p.name + " on the map" : null,
         onclick: () => {
           if (!lm) return;
+          closeWx();
           setView("map");
           requestAnimationFrame(() => flyTo(lm.x, lm.y, 2.6));
         },
@@ -15620,13 +15613,31 @@
         : null,
     );
   }
+  function wxBtnSum() {
+    const temps = WX.places
+      .map((p) => p.now && p.now.f)
+      .filter((v) => typeof v === "number");
+    if (WX.water && WX.water.f != null)
+      return "Lake conditions \u00B7 Water " + Math.round(WX.water.f) + "\u00B0F";
+    if (temps.length) {
+      const lo = Math.round(Math.min(...temps)),
+        hi = Math.round(Math.max(...temps));
+      return (
+        "Lake conditions \u00B7 " +
+        (lo === hi ? lo : lo + "\u2013" + hi) +
+        "\u00B0F"
+      );
+    }
+    return "Lake conditions";
+  }
   function renderWx() {
-    const box = $("#wxbox");
+    const btn = $("#wxbtn");
     if (!WX || !Array.isArray(WX.places) || !WX.places.length) {
-      box.hidden = true;
+      btn.hidden = true;
       return;
     }
-    box.hidden = false;
+    btn.hidden = false;
+    $("#wxbtnsum").textContent = wxBtnSum();
     const temps = WX.places
       .map((p) => p.now && p.now.f)
       .filter((v) => typeof v === "number");
@@ -15650,7 +15661,6 @@
     cards.replaceChildren(...WX.places.map(wxCard));
     $("#wxfoot").textContent = WX.note || "";
     wxAge();
-    setWxOpen(wxOpen, false);
   }
   function wxAge() {
     if (!WX || !WX.asOf) return;
@@ -15666,21 +15676,17 @@
         }),
       );
     el.append("As of " + wxWhen(WX.asOf) + " \u00B7 " + wxAgo(age));
-    $("#wxbox").dataset.stale = stale ? "1" : "0";
+    $("#wxview").dataset.stale = stale ? "1" : "0";
   }
-  function setWxOpen(open, remember) {
-    wxOpen = open;
-    const box = $("#wxbox");
-    box.dataset.open = open ? "1" : "0";
-    $("#wxtog").setAttribute("aria-expanded", String(open));
-    $("#wxbody").hidden = !open;
-    if (remember) {
-      try {
-        localStorage.setItem("lcp-wx", open ? "1" : "0");
-      } catch (_) {}
-    }
+  function openWx() {
+    if ($("#wxbtn").hidden) return;
+    $("#wxview").hidden = false;
   }
-  $("#wxtog").onclick = () => setWxOpen(!wxOpen, true);
+  function closeWx() {
+    $("#wxview").hidden = true;
+  }
+  $("#wxbtn").onclick = () => openWx();
+  $("#wx-back").onclick = () => closeWx();
   setInterval(wxAge, 60000);
 
   /* ---------------------------------------------------------------- render loop */
