@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS ads (
   image_path  TEXT NOT NULL,        -- /static/uploads/<file>.jpg
   title       TEXT NOT NULL DEFAULT '',  -- optional caption, e.g. "20% off bait this week"
   link_url    TEXT NOT NULL DEFAULT '',  -- optional; banner is clickable if set
+  link_pin_id INTEGER,               -- optional; banner flies to this pin instead (mutually exclusive with link_url)
   sort_order  INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
