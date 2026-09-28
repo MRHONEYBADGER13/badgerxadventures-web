@@ -1418,6 +1418,28 @@ def api_admin_chat_kick():
     conn.commit()
     return jsonify({"ok": True, "minutes": CHAT_KICK_MINUTES})
 
+@app.route("/api/admin/chat/ban", methods=["POST"])
+@admin_required
+def api_admin_chat_ban():
+    """A permanent ban: no expires_at, so chat_cleanup's
+    "expires_at IS NOT NULL AND expires_at < now" sweep never lifts it on
+    its own -- it stays in place until an admin calls /api/admin/chat/unban."""
+    data = request.get_json(force=True) or {}
+    display_name = (data.get("name") or "").strip()
+    conn = get_db()
+    target = _chat_resolve_target(conn, display_name)
+    if not target["session_id"] and not target["owner_id"]:
+        return jsonify({"error": "That name is not currently active in chat."}), 404
+    conn.execute(
+        "INSERT INTO chat_bans (session_id, owner_id, name, name_lower, expires_at) "
+        "VALUES (?, ?, ?, ?, NULL)",
+        (target["session_id"], target["owner_id"], display_name, target["name_lower"]),
+    )
+    if target["session_id"]:
+        conn.execute("DELETE FROM chat_names WHERE session_id = ?", (target["session_id"],))
+    conn.commit()
+    return jsonify({"ok": True})
+
 @app.route("/api/admin/chat/banned")
 @admin_required
 def api_admin_chat_banned():
