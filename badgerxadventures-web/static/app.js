@@ -11928,6 +11928,95 @@
     }),
     sv("g", { transform: "translate(29 -3) scale(1.3)" }, ...faceParts()),
   ];
+  /* an old-style banner-tow biplane, nose to the right -- flies past in the jet ski game */
+  const planeParts = () => [
+    /* tail plane + fin */
+    sv("path", {
+      d: "M18 30L40 27L40 33Z",
+      fill: "#F0CD7A",
+      stroke: "#8A5A00",
+      "stroke-width": 1.4,
+      "stroke-linejoin": "round",
+    }),
+    sv("path", {
+      d: "M22 30L30 12L38 28Z",
+      fill: "#F0CD7A",
+      stroke: "#8A5A00",
+      "stroke-width": 1.4,
+      "stroke-linejoin": "round",
+    }),
+    /* fuselage */
+    sv("path", {
+      d: "M26 30Q26 22 42 21L108 24Q124 26 124 30Q124 34 108 36L42 39Q26 38 26 30Z",
+      fill: "#FFF3D6",
+      stroke: "#8A5A00",
+      "stroke-width": 2,
+      "stroke-linejoin": "round",
+    }),
+    /* nose accent */
+    sv("path", {
+      d: "M100 24.5L124 30L100 35.5Z",
+      fill: "#E5533D",
+      stroke: "#7F2416",
+      "stroke-width": 1.4,
+      "stroke-linejoin": "round",
+    }),
+    /* cockpit */
+    sv("ellipse", {
+      cx: 70,
+      cy: 22,
+      rx: 8,
+      ry: 6,
+      fill: "rgba(200,238,252,.75)",
+      stroke: "#7FA9B5",
+      "stroke-width": 1.2,
+    }),
+    /* landing gear */
+    sv("path", {
+      d: "M64 40L60 50M92 40L96 50",
+      stroke: "#5C3A1E",
+      "stroke-width": 1.6,
+      "stroke-linecap": "round",
+    }),
+    sv("circle", { cx: 59, cy: 52, r: 5, fill: "#23282B" }),
+    sv("circle", { cx: 97, cy: 52, r: 5, fill: "#23282B" }),
+    /* lower + upper wing, with struts between */
+    sv("rect", {
+      x: 44,
+      y: 38,
+      width: 54,
+      height: 6,
+      rx: 2,
+      fill: "#E5533D",
+      stroke: "#7F2416",
+      "stroke-width": 1.6,
+    }),
+    sv("path", {
+      d: "M56 18L58 38M86 18L88 38",
+      stroke: "#5C3A1E",
+      "stroke-width": 1.6,
+      "stroke-linecap": "round",
+    }),
+    sv("rect", {
+      x: 50,
+      y: 12,
+      width: 44,
+      height: 6,
+      rx: 2,
+      fill: "#E5533D",
+      stroke: "#7F2416",
+      "stroke-width": 1.6,
+    }),
+    /* propeller */
+    sv("ellipse", {
+      cx: 126,
+      cy: 30,
+      rx: 1.6,
+      ry: 13,
+      fill: "rgba(40,30,20,.35)",
+    }),
+    sv("circle", { cx: 126, cy: 30, r: 2.6, fill: "#3B2A1A" }),
+  ];
   const AVK = ["duck", "sail", "bass", "pontoon", "turtle"];
   const AVU = ["gduck", "fly", "lant", "neon", "lily", "jet"];
   const AVS = {
@@ -16226,6 +16315,12 @@
       sessNew = [],
       bannerT = 0,
       rampHint = false;
+    /* banner-tow plane: flies past every so often, towing the admin's ad images */
+    let planeT = -1,
+      planeNext = 8,
+      planeDir = 1,
+      planeRun = 0,
+      planeSet = [];
     let best = 0;
     try {
       best = +localStorage.getItem("lcp-best") || 0;
@@ -16254,6 +16349,7 @@
     function sprites() {
       if (IMG.ski) return;
       raster("ski", skiParts(), "0 0 120 72", 120, 72);
+      raster("plane", planeParts(), "0 0 132 60", 132, 60);
       ["duck", "gduck", "fly", "lant", "neon", "lily"].forEach((k) =>
         raster(k, AVS[k].draw(), "-23 -27 46 32", 46, 32),
       );
@@ -16262,6 +16358,25 @@
     function spr(key, cx, cy, k) {
       const im = IMG[key];
       if (ok(im)) ctx.drawImage(im, cx - 23 * k, cy - 14 * k, 46 * k, 32 * k);
+    }
+
+    /* the plane's tow banner: the admin's ad images, fetched once per game session */
+    let AD_IMGS = [],
+      adsLoaded = false;
+    function loadAds() {
+      if (adsLoaded) return;
+      adsLoaded = true;
+      fetch("/api/ads", { credentials: "same-origin" })
+        .then((r) => (r.ok ? r.json() : []))
+        .then((list) => {
+          if (!Array.isArray(list)) return;
+          AD_IMGS = list.slice(0, 24).map((a) => {
+            const im = new Image();
+            im.src = a.image_path;
+            return im;
+          });
+        })
+        .catch(() => {});
     }
 
     /* layout: at least 560 x 440 world units are always visible */
@@ -16560,6 +16675,29 @@
       }
       texts = texts.filter((t) => t.l > 0);
       if (mode === "pause") return;
+      /* banner plane: an ambient flyby, independent of the run in progress */
+      if (planeT < 0) {
+        if (tm >= planeNext) {
+          if (adsLoaded && AD_IMGS.length) {
+            planeT = 0;
+            planeDir = Math.random() < 0.5 ? 1 : -1;
+            planeRun++;
+            const n = Math.min(6, AD_IMGS.length);
+            const start = ((planeRun - 1) * n) % AD_IMGS.length;
+            planeSet = [];
+            for (let i = 0; i < n; i++)
+              planeSet.push(AD_IMGS[(start + i) % AD_IMGS.length]);
+          } else {
+            planeNext = tm + 4; /* ads not loaded yet (or none) -- check again soon */
+          }
+        }
+      } else {
+        planeT += dt;
+        if (planeT > 8.5) {
+          planeT = -1;
+          planeNext = tm + rnd(20, 34);
+        }
+      }
       if (mode === "menu" || mode === "over") {
         X += 80 * dt;
         y = WY;
@@ -16861,6 +16999,71 @@
         ctx.stroke();
       }
     }
+    function planeScene() {
+      if (planeT < 0) return;
+      const wt = WY - 18,
+        dur = 8.5,
+        t = clamp(planeT / dur, 0, 1),
+        span = W + 560;
+      const px = planeDir > 0 ? -280 + span * t : W + 280 - span * t,
+        py = wt * 0.16 + 6,
+        bob = Math.sin(tm * 2.2) * 2;
+      const im = IMG.plane;
+      ctx.save();
+      ctx.translate(px, py + bob);
+      if (planeDir < 0) ctx.scale(-1, 1);
+      if (ok(im)) ctx.drawImage(im, -46, -21, 92, 42);
+      ctx.restore();
+
+      /* tow banner: the ad images, trailing behind the plane */
+      if (planeSet.length) {
+        const tileW = 46,
+          tileH = 30,
+          gap = 6,
+          ropeLen = 22,
+          bdir = -planeDir;
+        const tailX = px - planeDir * 42,
+          ropeEndX = tailX + bdir * ropeLen,
+          yy = py + bob - tileH / 2;
+        ctx.save();
+        ctx.strokeStyle = "rgba(60,40,20,.55)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(tailX, py + bob + 3);
+        ctx.lineTo(ropeEndX, py + bob + 3);
+        ctx.stroke();
+        planeSet.forEach((im2, i) => {
+          const a = ropeEndX + bdir * i * (tileW + gap),
+            b = a + bdir * tileW,
+            leftX = Math.min(a, b);
+          ctx.fillStyle = "#FFFEFA";
+          ctx.strokeStyle = "#8A5A00";
+          ctx.lineWidth = 1.4;
+          rr(leftX, yy, tileW, tileH, 4);
+          ctx.fill();
+          ctx.stroke();
+          if (ok(im2)) {
+            ctx.save();
+            rr(leftX + 2, yy + 2, tileW - 4, tileH - 4, 3);
+            ctx.clip();
+            const iw = im2.naturalWidth || 1,
+              ih = im2.naturalHeight || 1,
+              sc = Math.max((tileW - 4) / iw, (tileH - 4) / ih),
+              dw = iw * sc,
+              dh = ih * sc;
+            ctx.drawImage(
+              im2,
+              leftX + 2 + (tileW - 4 - dw) / 2,
+              yy + 2 + (tileH - 4 - dh) / 2,
+              dw,
+              dh,
+            );
+            ctx.restore();
+          }
+        });
+        ctx.restore();
+      }
+    }
     function drawRamp(r) {
       const sx = r.x - X;
       if (sx < -RW - 40 || sx > W + 40) return;
@@ -17046,6 +17249,7 @@
           (Math.random() - 0.5) * shake * 10,
         );
       scene();
+      planeScene();
       for (const r of ramps) drawRamp(r);
       for (const e of items) {
         if (!e.got) drawItem(e);
@@ -17207,6 +17411,7 @@
       open = true;
       dark = isDark();
       sprites();
+      loadAds();
       SND.ensure();
       syncSnd();
       root.hidden = false;
