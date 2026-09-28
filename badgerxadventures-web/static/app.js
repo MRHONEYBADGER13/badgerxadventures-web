@@ -11961,16 +11961,6 @@
       "stroke-width": 1.4,
       "stroke-linejoin": "round",
     }),
-    /* cockpit */
-    sv("ellipse", {
-      cx: 70,
-      cy: 22,
-      rx: 8,
-      ry: 6,
-      fill: "rgba(200,238,252,.75)",
-      stroke: "#7FA9B5",
-      "stroke-width": 1.2,
-    }),
     /* landing gear */
     sv("path", {
       d: "M64 40L60 50M92 40L96 50",
@@ -12016,6 +12006,32 @@
       fill: "rgba(40,30,20,.35)",
     }),
     sv("circle", { cx: 126, cy: 30, r: 2.6, fill: "#3B2A1A" }),
+    /* the pilot: a girl badger, up out of the open cockpit -- ears, bow, and a windshield in front of her */
+    sv("g", { transform: "translate(61 11) scale(.55)" }, ...faceParts()),
+    sv("path", {
+      d: "M63 6L70 9L63 12Z",
+      fill: "#FF6FA5",
+      stroke: "#93244A",
+      "stroke-width": 1,
+      "stroke-linejoin": "round",
+    }),
+    sv("path", {
+      d: "M77 6L70 9L77 12Z",
+      fill: "#FF6FA5",
+      stroke: "#93244A",
+      "stroke-width": 1,
+      "stroke-linejoin": "round",
+    }),
+    sv("circle", { cx: 70, cy: 9, r: 1.8, fill: "#93244A" }),
+    sv("ellipse", {
+      cx: 80,
+      cy: 19,
+      rx: 5.5,
+      ry: 5,
+      fill: "rgba(200,238,252,.7)",
+      stroke: "#7FA9B5",
+      "stroke-width": 1.2,
+    }),
   ];
   const AVK = ["duck", "sail", "bass", "pontoon", "turtle"];
   const AVU = ["gduck", "fly", "lant", "neon", "lily", "jet"];
@@ -17004,30 +17020,53 @@
       const wt = WY - 18,
         dur = 8.5,
         t = clamp(planeT / dur, 0, 1),
-        span = W + 560;
-      const px = planeDir > 0 ? -280 + span * t : W + 280 - span * t,
+        off = 320,
+        span = W + off * 2;
+      const px = planeDir > 0 ? -off + span * t : W + off - span * t,
         py = wt * 0.16 + 6,
-        bob = Math.sin(tm * 2.2) * 2;
+        bob = Math.sin(tm * 2.2) * 3;
       const im = IMG.plane;
       ctx.save();
       ctx.translate(px, py + bob);
       if (planeDir < 0) ctx.scale(-1, 1);
-      if (ok(im)) ctx.drawImage(im, -46, -21, 92, 42);
+      if (ok(im)) ctx.drawImage(im, -75, -34, 150, 68);
+      /* the pilot's waving arm -- drawn live (not part of the raster) so it actually waves;
+         raised straight up out of the cockpit, clear of her face, waggling side to side */
+      const armBaseX = 11,
+        armBaseY = -16,
+        armLen = 14,
+        armAng = (Math.sin(tm * 6) * 25 * Math.PI) / 180,
+        armTipX = armBaseX + Math.sin(armAng) * armLen,
+        armTipY = armBaseY - Math.cos(armAng) * armLen;
+      ctx.strokeStyle = "#F2A21A";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(armBaseX, armBaseY);
+      ctx.lineTo(armTipX, armTipY);
+      ctx.stroke();
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = "#1B1B1B";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(armTipX, armTipY, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
       ctx.restore();
 
       /* tow banner: the ad images, trailing behind the plane */
       if (planeSet.length) {
-        const tileW = 46,
-          tileH = 30,
-          gap = 6,
-          ropeLen = 22,
+        const tileW = 72,
+          tileH = 46,
+          gap = 10,
+          ropeLen = 34,
           bdir = -planeDir;
-        const tailX = px - planeDir * 42,
+        const tailX = px - planeDir * 69,
           ropeEndX = tailX + bdir * ropeLen,
           yy = py + bob - tileH / 2;
         ctx.save();
         ctx.strokeStyle = "rgba(60,40,20,.55)";
-        ctx.lineWidth = 1.4;
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(tailX, py + bob + 3);
         ctx.lineTo(ropeEndX, py + bob + 3);
@@ -17038,13 +17077,13 @@
             leftX = Math.min(a, b);
           ctx.fillStyle = "#FFFEFA";
           ctx.strokeStyle = "#8A5A00";
-          ctx.lineWidth = 1.4;
-          rr(leftX, yy, tileW, tileH, 4);
+          ctx.lineWidth = 2;
+          rr(leftX, yy, tileW, tileH, 6);
           ctx.fill();
           ctx.stroke();
           if (ok(im2)) {
             ctx.save();
-            rr(leftX + 2, yy + 2, tileW - 4, tileH - 4, 3);
+            rr(leftX + 2, yy + 2, tileW - 4, tileH - 4, 5);
             ctx.clip();
             const iw = im2.naturalWidth || 1,
               ih = im2.naturalHeight || 1,
