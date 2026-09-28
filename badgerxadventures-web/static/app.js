@@ -17349,6 +17349,7 @@
   let lcPollTimer = null;
   let lcPingState = { incoming: null, outgoing: null, revealed: null };
   let lcPingRevealedSeen = null;
+  let lcModTarget = null; /* {name, msgId} of the person the admin's moderation panel is open for */
 
   function lcGetSeen() {
     try { return parseInt(localStorage.getItem("lc_seen_id") || "0", 10) || 0; } catch (_) { return 0; }
@@ -17388,15 +17389,23 @@
       return;
     }
     const youLower = lcYou ? lcYou.name_lower : null;
+    const isAdmin = ROLE.kind === "admin";
     body.innerHTML = lcMessages.map(function (m) {
       const mine = youLower && m.name.toLowerCase() === youLower;
       const mentioned = youLower && Array.isArray(m.mentions) && m.mentions.indexOf(youLower) !== -1;
       const isBadger = m.name.toLowerCase() === "badger";
       const cls = "lc-msg" + (mine ? " mine" : "") + (mentioned && !mine ? " mentioned" : "") +
         (isBadger ? " lc-badger" : "");
-      const nameCls = "lc-name" + (isBadger ? " lc-badger-name" : "");
+      /* the admin can moderate anyone but themselves -- tap their name in
+         Lake Chat to delete messages, warn, or ban them (5 min or until
+         unbanned) right from the chat, no separate admin page needed */
+      const canMod = isAdmin && !isBadger;
+      const nameCls = "lc-name" + (isBadger ? " lc-badger-name" : "") + (canMod ? " lc-name-adm" : "");
+      const nameAttrs = canMod
+        ? ' data-mod-name="' + lcEscape(m.name) + '" data-mod-msg="' + m.id + '" role="button" tabindex="0"'
+        : "";
       const boat = lcOnLakeSet.has(m.name.toLowerCase()) ? LC_BOAT_SVG : "";
-      return '<div class="' + cls + '"><span class="' + nameCls + '">' + boat + lcEscape(m.name) +
+      return '<div class="' + cls + '"><span class="' + nameCls + '"' + nameAttrs + '>' + boat + lcEscape(m.name) +
         '</span><span class="lc-text">' + lcRenderText(m.text, m.mentions) + "</span></div>";
     }).join("");
     body.scrollTop = body.scrollHeight;
@@ -17539,6 +17548,28 @@
     }
   }
 
+  /* admin moderation panel -- opened by tapping a name in Lake Chat.
+     lcModTarget holds {name, msgId} for whoever it's currently open for;
+     closing it is just setting lcModTarget = null and re-rendering. */
+  function lcRenderModPanel() {
+    const overlay = $("#lc-mod-overlay");
+    if (!overlay) return;
+    if (!lcModTarget) { overlay.hidden = true; overlay.innerHTML = ""; return; }
+    const name = lcModTarget.name;
+    overlay.innerHTML =
+      '<div class="lc-mod-card" role="dialog" aria-modal="true">' +
+      "<h2>" + lcEscape(name) + "</h2>" +
+      '<button type="button" class="btn" data-mod="delmsg">Delete this message</button>' +
+      '<button type="button" class="btn" data-mod="delall">Delete all their messages</button>' +
+      '<button type="button" class="btn" data-mod="warn">Send warning</button>' +
+      '<button type="button" class="btn" data-mod="kick">Ban 5 minutes</button>' +
+      '<button type="button" class="btn danger" data-mod="ban">Ban permanently</button>' +
+      '<button type="button" class="btn" data-mod="unban">Unban</button>' +
+      '<button type="button" class="btn" data-mod="close">Cancel</button>' +
+      "</div>";
+    overlay.hidden = false;
+  }
+
   async function lcFetchPingState() {
     try {
       const res = await fetch("/api/chat/ping/state", { credentials: "same-origin" });
@@ -17638,6 +17669,68 @@
     btn.onclick = function () { openLakeChat(); };
     const backBtn = $("#lc-back");
     if (backBtn) backBtn.onclick = function () { closeLakeChat(); };
+
+    const bodyEl = $("#lc-body");
+    if (bodyEl) {
+      bodyEl.addEventListener("click", function (e) {
+        const nameEl = e.target.closest(".lc-name-adm");
+        if (!nameEl) return;
+        lcModTarget = { name: nameEl.getAttribute("data-mod-name"), msgId: nameEl.getAttribute("data-mod-msg") };
+        lcRenderModPanel();
+      });
+    }
+    const modOverlay = $("#lc-mod-overlay");
+    if (modOverlay) {
+      modOverlay.addEventListener("click", async function (e) {
+        if (e.target === modOverlay) { lcModTarget = null; lcRenderModPanel(); return; }
+        const btn = e.target.closest("[data-mod]");
+        if (!btn || !lcModTarget) return;
+        const act = btn.getAttribute("data-mod");
+        if (act === "close") { lcModTarget = null; lcRenderModPanel(); return; }
+        const name = lcModTarget.name, msgId = lcModTarget.msgId;
+        try {
+          if (act === "delmsg") {
+            await fetch("/api/admin/chat/messages/" + msgId, { method: "DELETE", credentials: "same-origin" });
+          } else if (act === "delall") {
+            if (!confirm('Delete all messages from "' + name + '"?')) return;
+            await fetch("/api/admin/chat/messages/by-name", {
+              method: "DELETE", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name }),
+            });
+          } else if (act === "warn") {
+            const text = prompt('Private warning for "' + name + '" (only they will see this):');
+            if (!text) return;
+            const res = await fetch("/api/admin/chat/warn", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name, text: text }),
+            });
+            const data = await res.json().catch(function () { return {}; });
+            if (!res.ok) { alert(data.error || "Could not send warning."); return; }
+          } else if (act === "kick") {
+            if (!confirm('Ban "' + name + '" from Lake Chat for 5 minutes?')) return;
+            await fetch("/api/admin/chat/kick", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name }),
+            });
+          } else if (act === "ban") {
+            if (!confirm('Permanently ban "' + name + '" from Lake Chat? They stay banned until you unban them.')) return;
+            await fetch("/api/admin/chat/ban", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name }),
+            });
+          } else if (act === "unban") {
+            await fetch("/api/admin/chat/unban", {
+              method: "POST", credentials: "same-origin",
+              headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name }),
+            });
+          }
+        } catch (_) {}
+        lcModTarget = null;
+        lcRenderModPanel();
+        await lcFetchMessages();
+        lcRenderMessages();
+      });
+    }
 
     const claimForm = $("#lc-claim");
     if (claimForm) {
