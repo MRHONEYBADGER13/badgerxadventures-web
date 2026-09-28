@@ -398,7 +398,7 @@ svg[data-hi="1"] .sr-l,.sr-l.sel{display:inline}
 .sp-line{margin:0;font:700 17px var(--body);color:#fff;text-shadow:0 1px 4px rgba(0,35,60,.6);min-height:1.4em;text-align:center}
 .sp-track{position:relative;width:min(560px,100%);height:14px;margin-top:20px;border-radius:999px;background:rgba(255,255,255,.28);box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6)}
 .sp-fill{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:999px;background:linear-gradient(90deg,#FFE58A,#FFD21F)}
-.sp-sail{position:absolute;left:0;top:-27px;width:38px;height:32px;margin-left:-19px;pointer-events:none;overflow:visible}
+.sp-sail{position:absolute;left:0;top:-17px;width:60px;height:24px;margin-left:-30px;pointer-events:none;overflow:visible}
 .sp-foot{width:min(560px,100%);display:flex;justify-content:space-between;align-items:center;gap:12px;color:#fff;font:600 13px var(--body);text-shadow:0 1px 3px rgba(0,35,60,.6)}
 .sp-foot b{font-variant-numeric:tabular-nums;font-weight:800;min-width:3ch}
 .sp-hint{flex:1;text-align:center}
@@ -578,7 +578,18 @@ a.btn{color:var(--ink);text-decoration:none}
     <p class="sp-line" id="spline">Waking the badger&hellip;</p>
     <div class="sp-track" id="sptrack" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
       <div class="sp-fill" id="spfill"></div>
-      <svg class="sp-sail" id="spsail" viewBox="-19 -30 38 32" aria-hidden="true"><path d="M0 -6V-28" stroke="#6B4A2B" stroke-width="1.8" stroke-linecap="round"/><path d="M1.500 -27L1.500 -8.500L16 -8.500Z" fill="#fff" stroke="#8FA0A8" stroke-width=".9" stroke-linejoin="round"/><path d="M-1.500 -23L-1.500 -8.500L-13 -8.500Z" fill="#FFE3AE" stroke="#C29A4E" stroke-width=".9" stroke-linejoin="round"/><path d="M0 -28l6.500 2.200L0 -23.600Z" fill="#E5533D"/><path d="M-17 -7H17Q14 0 6 0H-9Q-14.500 0 -17 -7Z" fill="#E5533D" stroke="#8F2A1B" stroke-width="1.200" stroke-linejoin="round"/></svg>
+      <svg class="sp-sail" id="spsail" viewBox="-30 -20 60 24" aria-hidden="true">
+        <g class="sp-wake" id="spwake" opacity="0">
+          <path d="M-27 2Q-34 4 -40 2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".75"/>
+          <path d="M-27 5Q-35 8 -42 5.5" fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round" opacity=".45"/>
+          <path d="M-26 -1Q-31 -3 -36 -1.5" fill="none" stroke="#fff" stroke-width="1.1" stroke-linecap="round" opacity=".4"/>
+        </g>
+        <path d="M-27 -1L-22 -1L-23 4L-26.5 4Z" fill="#2B2B2B" stroke="#111" stroke-width=".6" stroke-linejoin="round"/>
+        <path d="M-26 -8L-26 0L20 0L28 -7L6 -10L-18 -10Z" fill="#E5533D" stroke="#8F2A1B" stroke-width="1.1" stroke-linejoin="round"/>
+        <path d="M-26 -4H20" stroke="#FFE3AE" stroke-width="1" opacity=".85"/>
+        <path d="M-2 -10L4 -10L2 -16L-4 -15Z" fill="#8FA0A8" stroke="#5F7078" stroke-width=".8" stroke-linejoin="round"/>
+        <text x="-3" y="-2.4" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="6.4" font-weight="800" fill="#fff" letter-spacing="-.3">BADGER</text>
+      </svg>
     </div>
     <div class="sp-foot"><b id="sppct">0%</b><span class="sp-hint" id="sphint">Tap the water. Boop the badger.</span><button type="button" id="spskip">Skip</button></div>
   </div>
@@ -597,7 +608,60 @@ a.btn{color:var(--ink);text-decoration:none}
   var $ = function(id){ return document.getElementById(id); };
   var LINES = [[0, 'Waking the badger…'], [.14, 'Checking the water temperature…'], [.30, 'Charting the coves…'], [.46, 'Inflating the rubber duck…'], [.62, 'Finding the good fishing spots…'], [.78, 'Untangling the fishing lines…'], [.92, 'Almost at the dock…']];
   var SAY = ['Boop!', 'Hey there!', 'That tickles.', 'Ready to explore?', 'Snout off!', 'Almost there…', 'Okay, I am up.'];
-  var fill = $('spfill'), sail = $('spsail'), pct = $('sppct'), line = $('spline'), track = $('sptrack');
+  var fill = $('spfill'), sail = $('spsail'), pct = $('sppct'), line = $('spline'), track = $('sptrack'), wake = $('spwake');
+  /* speedboat engine: synthesised with Web Audio (no audio file) -- two detuned
+     oscillators through a low-pass for the motor buzz, an LFO for the idle
+     putter, and filtered noise for the water hiss. Browsers won't let a fresh
+     AudioContext make sound before a user gesture, so it's created quiet and
+     unlocked on the first tap/boop/skip -- which the splash already invites
+     ("Tap the water. Boop the badger."). */
+  var AC = window.AudioContext || window.webkitAudioContext, snd = null;
+  function initSound(){
+    if (snd || !AC) return;
+    try {
+      var ac = new AC();
+      var nbuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 1.2), ac.sampleRate), nd = nbuf.getChannelData(0);
+      for (var i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+      var o1 = ac.createOscillator(), o2 = ac.createOscillator(), lp = ac.createBiquadFilter(),
+          buzz = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain(),
+          lvl = ac.createGain(), master = ac.createGain();
+      var ns = ac.createBufferSource(), nf = ac.createBiquadFilter(), ng = ac.createGain();
+      o1.type = 'sawtooth'; o2.type = 'square'; o2.detune.value = 9;
+      lp.type = 'lowpass'; lp.Q.value = 3;
+      buzz.gain.value = 0.55;
+      lfo.type = 'sine'; lg.gain.value = 0.3;
+      lfo.connect(lg); lg.connect(buzz.gain);
+      o1.connect(lp); o2.connect(lp); lp.connect(buzz); buzz.connect(lvl);
+      ns.buffer = nbuf; ns.loop = true;
+      nf.type = 'bandpass'; nf.Q.value = 0.5; nf.frequency.value = 1100;
+      ng.gain.value = 0.14;
+      ns.connect(nf); nf.connect(ng); ng.connect(lvl);
+      lvl.gain.value = 0.16; lvl.connect(master); master.connect(ac.destination);
+      o1.frequency.value = 95; o2.frequency.value = 47.5; lfo.frequency.value = 19; lp.frequency.value = 550;
+      master.gain.setValueAtTime(0.0001, ac.currentTime);
+      master.gain.linearRampToValueAtTime(0.11, ac.currentTime + 0.6);
+      [o1, o2, lfo, ns].forEach(function(n){ n.start(); });
+      snd = { ac: ac, o1: o1, o2: o2, lp: lp, master: master };
+    } catch (e) { snd = null; }
+  }
+  function unlockSound(){
+    if (!snd) initSound();
+    if (snd && snd.ac.state === 'suspended') { try { snd.ac.resume(); } catch (e) {} }
+  }
+  function throttleSound(p){
+    if (!snd) return;
+    var t = snd.ac.currentTime, f = 95 + p * 55;
+    snd.o1.frequency.setTargetAtTime(f, t, 0.15);
+    snd.o2.frequency.setTargetAtTime(f * 0.5, t, 0.15);
+    snd.lp.frequency.setTargetAtTime(520 + f * 4, t, 0.2);
+  }
+  function stopSound(){
+    if (!snd) return;
+    var s = snd, t = s.ac.currentTime;
+    try { s.master.gain.setTargetAtTime(0.0001, t, 0.18); } catch (e) {}
+    setTimeout(function(){ try { s.ac.close(); } catch (e) {} }, 500);
+    snd = null;
+  }
   function build(){
     var T = 'BADGERxADVENTURES', h = $('sptitle'), tu = null;
     h.textContent = '';
@@ -617,6 +681,7 @@ a.btn{color:var(--ink);text-decoration:none}
       tu.appendChild(b); tu.appendChild(sayw);
       var boop = function(e){
         if (e){ e.stopPropagation(); }
+        unlockSound();
         count++;
         b.classList.remove('boop'); void b.getBoundingClientRect(); b.classList.add('boop');
         say.textContent = SAY[(count - 1) % SAY.length]; say.style.marginLeft = '0px'; say.classList.add('on');
@@ -636,6 +701,7 @@ a.btn{color:var(--ink);text-decoration:none}
     el.appendChild(r); setTimeout(function(){ if (r.parentNode) r.parentNode.removeChild(r); }, 1150);
   }
   el.addEventListener('pointerdown', function(e){
+    unlockSound();
     if (e.target.closest && (e.target.closest('#spskip') || e.target.closest('.badger'))) return;
     ripple(e.clientX, e.clientY);
     setTimeout(function(){ ripple(e.clientX, e.clientY); }, 170);
@@ -643,6 +709,8 @@ a.btn{color:var(--ink);text-decoration:none}
   function update(p){
     var w = (p * 100).toFixed(1) + '%';
     fill.style.width = w; sail.style.left = w;
+    if (wake) wake.style.opacity = Math.min(1, p * 12);
+    throttleSound(p);
     var n = Math.floor(p * 100); pct.textContent = n + '%';
     if (n % 5 === 0) track.setAttribute('aria-valuenow', n);
     var k = 0; for (var i = 0; i < LINES.length; i++){ if (p >= LINES[i][0]) k = i; }
@@ -651,7 +719,8 @@ a.btn{color:var(--ink);text-decoration:none}
   function finish(fast){
     if (finished) return; finished = true;
     update(1); line.textContent = 'Welcome aboard!';
-    var app = document.getElementById('app'); 
+    stopSound();
+    var app = document.getElementById('app');
     var done = function(){ if (el.parentNode) el.parentNode.removeChild(el); if (app) app.removeAttribute('inert'); };
     setTimeout(function(){ el.classList.add('sp-out'); setTimeout(done, fast ? 0 : 650); }, fast ? 0 : 450);
   }
@@ -660,9 +729,11 @@ a.btn{color:var(--ink);text-decoration:none}
     var p = Math.min(1, (now - t0) / D); update(p);
     if (p >= 1) finish(false); else requestAnimationFrame(frame);
   }
-  $('spskip').addEventListener('click', function(){ finish(true); });
+  $('spskip').addEventListener('click', function(){ unlockSound(); finish(true); });
+  window.addEventListener('keydown', unlockSound, { once: true });
   window.__splashDone = function(){ return finished; };
   build();
+  initSound();
   var app0 = document.getElementById('app'); if (app0) app0.setAttribute('inert', '');
   document.addEventListener('DOMContentLoaded', function(){ var a = document.getElementById('app'); if (a && !finished) a.setAttribute('inert', ''); });
   requestAnimationFrame(frame);
