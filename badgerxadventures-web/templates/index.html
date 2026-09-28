@@ -108,6 +108,11 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.01em;text-wrap:bal
   .lc-msg.lc-badger{animation:none;box-shadow:0 0 10px 2px rgba(255,64,64,.6),0 0 20px 6px rgba(64,140,255,.4)}
   .lc-name.lc-badger-name{animation:none;background-position:0 50%}
 }
+.lc-name.lc-name-adm{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}
+#lc-mod-overlay{position:fixed;inset:0;z-index:195;background:rgba(10,10,10,.6);display:flex;align-items:center;justify-content:center;padding:20px}
+.lc-mod-card{width:100%;max-width:340px;background:var(--card);border-radius:20px;box-shadow:0 24px 60px rgba(0,0,0,.4);padding:22px 20px;display:flex;flex-direction:column;gap:9px}
+.lc-mod-card h2{margin:0 0 6px;font:800 17px/1.25 var(--display);color:var(--head);text-align:center;word-break:break-word}
+.lc-mod-card .btn{width:100%;height:44px;font-size:14px}
 .lc-empty{margin:auto;color:var(--muted);font-size:13px;text-align:center}
 .lc-claim{padding:14px 12px;display:flex;flex-direction:column;gap:8px;max-width:360px;margin:auto;width:100%}
 .lc-claim input{height:40px;border:1px solid var(--line);border-radius:10px;padding:0 12px;font-size:14px;background:var(--field)}
@@ -641,7 +646,7 @@ a.btn{color:var(--ink);text-decoration:none}
       master.gain.setValueAtTime(0.0001, ac.currentTime);
       master.gain.linearRampToValueAtTime(0.11, ac.currentTime + 0.6);
       [o1, o2, lfo, ns].forEach(function(n){ n.start(); });
-      snd = { ac: ac, o1: o1, o2: o2, lp: lp, master: master };
+      snd = { ac: ac, o1: o1, o2: o2, lfo: lfo, ns: ns, lp: lp, master: master };
     } catch (e) { snd = null; }
   }
   function unlockSound(){
@@ -658,8 +663,15 @@ a.btn{color:var(--ink);text-decoration:none}
   function stopSound(){
     if (!snd) return;
     var s = snd, t = s.ac.currentTime;
-    try { s.master.gain.setTargetAtTime(0.0001, t, 0.18); } catch (e) {}
-    setTimeout(function(){ try { s.ac.close(); } catch (e) {} }, 500);
+    /* fade fast, then hard-stop every sound-generating node (not just the
+       gain fade) so the engine is guaranteed silent -- not merely quiet --
+       the moment the loading screen is gone, instead of trailing off into
+       the rest of the site. */
+    try { s.master.gain.cancelScheduledValues(t); s.master.gain.setTargetAtTime(0.0001, t, 0.08); } catch (e) {}
+    setTimeout(function(){
+      [s.o1, s.o2, s.lfo, s.ns].forEach(function(n){ try { n.stop(); } catch (e) {} });
+      try { s.ac.close(); } catch (e) {}
+    }, 220);
     snd = null;
   }
   function build(){
@@ -784,6 +796,7 @@ a.btn{color:var(--ink);text-decoration:none}
 </div>
 <div id="lc-warn-overlay" hidden></div>
 <div id="lc-ping-overlay" hidden></div>
+<div id="lc-mod-overlay" hidden></div>
 
   <div class="tools">
     <div class="chips" id="chips" role="group" aria-label="Filter by category"></div>
