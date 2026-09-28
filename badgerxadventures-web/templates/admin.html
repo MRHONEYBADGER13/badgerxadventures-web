@@ -60,14 +60,14 @@
     <p style="font-size:13px;color:var(--muted);margin-top:0">
       Messages disappear 5 hours after posting; a guest's claimed name frees up 7 days later.
       Business/stay owners always chat under their pin's name, and that name is reserved for them.
-      A kick lasts 5 minutes and then lifts on its own -- or add someone back sooner below.
+      A kick lasts 5 minutes and then lifts on its own; a ban stays in place until you unban them.
     </p>
     <h4 style="margin-bottom:6px">Active names</h4>
     <table class="admin-table" id="chatNamesTable">
       <thead><tr><th>Name</th><th>Type</th><th></th><th></th></tr></thead>
       <tbody></tbody>
     </table>
-    <h4 style="margin:16px 0 6px">Kicked (auto-clears after 5 min)</h4>
+    <h4 style="margin:16px 0 6px">Kicked &amp; banned</h4>
     <table class="admin-table" id="chatBannedTable">
       <thead><tr><th>Name</th><th>Type</th><th>Status</th><th></th></tr></thead>
       <tbody></tbody>
@@ -228,7 +228,8 @@ async function loadChatNames(){
       <td>
         ${n.banned
           ? `<button class="btn-sm" data-act="unban" data-name="${escHtml(n.name)}">Unban</button>`
-          : `<button class="btn-sm danger" data-act="kick" data-name="${escHtml(n.name)}">Kick</button>`}
+          : `<button class="btn-sm danger" data-act="kick" data-name="${escHtml(n.name)}">Kick</button>
+             <button class="btn-sm danger" data-act="ban" data-name="${escHtml(n.name)}">Ban</button>`}
         <button class="btn-sm" data-act="warn" data-name="${escHtml(n.name)}">Warn</button>
         <button class="btn-sm danger" data-act="delmsgs" data-name="${escHtml(n.name)}">Del msgs</button>
       </td>
@@ -241,7 +242,7 @@ async function loadChatBanned(){
   const tbody = document.querySelector('#chatBannedTable tbody');
   const now = Date.now();
   tbody.innerHTML = rows.map(b => {
-    let status = 'kicked';
+    let status = 'banned (permanent)';
     if (b.until) {
       const mins = Math.max(0, Math.ceil((b.until - now) / 60000));
       status = mins > 0 ? ('back in ~' + mins + ' min') : 'clearing now';
@@ -254,7 +255,7 @@ async function loadChatBanned(){
         <td><button class="btn-sm" data-act="unban" data-name="${escHtml(b.name)}">Add back</button></td>
       </tr>
     `;
-  }).join('') || '<tr><td colspan="4" style="color:var(--muted)">No one is currently kicked.</td></tr>';
+  }).join('') || '<tr><td colspan="4" style="color:var(--muted)">No one is currently kicked or banned.</td></tr>';
 }
 
 document.addEventListener('click', async (e) => {
@@ -265,6 +266,11 @@ document.addEventListener('click', async (e) => {
   if (act === 'kick') {
     if (!confirm('Kick "' + name + '" from Lake Chat for 5 minutes? Their name frees up right away, and they can rejoin automatically after that -- or you can add them back sooner from the Kicked list.')) return;
     await fetch('/api/admin/chat/kick', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
+    loadChatNames();
+    loadChatBanned();
+  } else if (act === 'ban') {
+    if (!confirm('Permanently ban "' + name + '" from Lake Chat? They stay banned until you unban them.')) return;
+    await fetch('/api/admin/chat/ban', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})});
     loadChatNames();
     loadChatBanned();
   } else if (act === 'unban') {
