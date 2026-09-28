@@ -390,6 +390,11 @@ def redeem_page():
     return render_template("redeem.html")
 
 
+@app.route("/advertise")
+def advertise_page():
+    return render_template("advertise.html")
+
+
 @app.route("/login")
 def login_page():
     return render_template("login.html")
