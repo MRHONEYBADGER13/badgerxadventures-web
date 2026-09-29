@@ -24,6 +24,18 @@
       </div>
     </div>
   </div>
+  <div class="admin-panel" style="grid-column:1 / -1">
+    <h3>Visitors (last 24 hours)</h3>
+    <p style="font-size:13px;color:var(--muted);margin-top:0">
+      Everyone who's loaded the map page in the last day, with their IP address. This list
+      clears itself after 24 hours -- ban an IP here to block it from the whole site right
+      away (same list as Banned IPs, below, under Lake Chat).
+    </p>
+    <table class="admin-table" id="visitorLogTable">
+      <thead><tr><th>IP</th><th>Visits</th><th>Last seen</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
   <div class="admin-panel">
     <h3>Invite codes</h3>
     <div class="inline-form">
@@ -127,6 +139,23 @@ async function loadVisits(){
   const data = await fetch('/api/admin/visits').then(r => r.json());
   document.getElementById('visitsTotal').textContent = data.total;
   document.getElementById('visitsToday').textContent = data.today;
+}
+
+async function loadVisitorLog(){
+  const rows = await fetch('/api/admin/visitor-log').then(r => r.json());
+  const tbody = document.querySelector('#visitorLogTable tbody');
+  tbody.innerHTML = rows.map(v => `
+    <tr>
+      <td>${ipCell(v.ip)}</td>
+      <td>${v.hits}</td>
+      <td>${new Date(v.lastAt).toLocaleString()}</td>
+      <td>
+        ${v.banned
+          ? '<span style="color:#B3261E;font-weight:700">banned</span>'
+          : `<button class="btn-sm danger" data-act="banvisitorip" data-ip="${escHtml(v.ip)}">Ban IP</button>`}
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" style="color:var(--muted)">No visitors in the last 24 hours.</td></tr>';
 }
 
 async function loadCodes(){
@@ -479,6 +508,13 @@ document.addEventListener('click', async (e) => {
     const ip = btn.dataset.ip;
     await fetch('/api/admin/banned-ips/' + encodeURIComponent(ip), {method:'DELETE'});
     loadBannedIps();
+    loadVisitorLog();
+  } else if (act === 'banvisitorip') {
+    const ip = btn.dataset.ip;
+    if (!confirm('Permanently block ' + ip + ' from the entire site? This stays in place until you unban it from the Banned IPs list.')) return;
+    await fetch('/api/admin/banned-ips', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ip, label:''})});
+    loadVisitorLog();
+    loadBannedIps();
   } else if (act === 'warn') {
     const text = prompt('Private warning for "' + name + '" (only they will see this):');
     if (!text) return;
@@ -512,8 +548,8 @@ async function loadChatMessages(){
 
 (async () => {
   if (await requireAdmin()) {
-    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits(); loadBannedIps();
-    setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); }, 10000);
+    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits(); loadBannedIps(); loadVisitorLog();
+    setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisitorLog(); }, 10000);
   }
 })();
 </script>
