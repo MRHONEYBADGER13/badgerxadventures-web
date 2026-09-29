@@ -13472,6 +13472,20 @@
     if (acct) {
       acct.replaceChildren(
         ...[
+          ROLE.kind === "owner" && ROLE.pinType === "stay" && ROLE.hasPin
+            ? h(
+                "button",
+                { type: "button", class: "btn sm", onclick: openOwnerCleaningPanel },
+                "Cleaning",
+              )
+            : null,
+          CLEANER.kind === "cleaner" && CLEANER.status === "approved"
+            ? h(
+                "button",
+                { type: "button", class: "btn sm", onclick: openCleanerJobsPanel },
+                "Cleaning jobs",
+              )
+            : null,
           ROLE.kind === "guest"
             ? h("a", { class: "btn sm", href: "/login", text: "Log in" })
             : h(
@@ -18121,4 +18135,469 @@
   /* the ping@ consent modal and the revealed-location map marker both need
      to work whether or not Lake Chat itself is open right now */
   setInterval(lcFetchPingState, 5000);
+
+  /* ---------------------------------------------------------------- cabin cleaning marketplace */
+  const CLEANER = (() => {
+    try {
+      return JSON.parse(document.getElementById("cleaner").textContent);
+    } catch (_) {
+      return { kind: "guest", cleanerId: null, status: null };
+    }
+  })();
+  const cleanMoney = (cents) => fmtMoney((cents || 0) / 100);
+
+  /* ---- a card on file, for owners: loads Stripe.js on first use only ---- */
+  async function loadStripeJs() {
+    if (window.Stripe) return window.Stripe;
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://js.stripe.com/v3/";
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.append(s);
+    });
+    return window.Stripe;
+  }
+
+  /* ---- owner: request cleans, review + accept bids, confirm & pay ---- */
+  let ownerCleanPanel = null;
+  function getOwnerCleanPanel() {
+    if (!ownerCleanPanel) {
+      ownerCleanPanel = h("div", { class: "clean-panel", style: "z-index:60", hidden: true });
+      document.body.append(ownerCleanPanel);
+    }
+    return ownerCleanPanel;
+  }
+  function closeOwnerCleaningPanel() {
+    if (ownerCleanPanel) ownerCleanPanel.hidden = true;
+  }
+  function openOwnerCleaningPanel() {
+    getOwnerCleanPanel().hidden = false;
+    paintOwnerCleanPanel();
+  }
+  async function mountCardForm(clientSecret, publishableKey, onSaved) {
+    const errEl = h("div", { class: "err" });
+    let stripe;
+    try {
+      stripe = (await loadStripeJs())(publishableKey);
+    } catch (_) {
+      errEl.textContent = "Could not load Stripe. Check your connection and try again.";
+      return h("div", {}, errEl);
+    }
+    const elements = stripe.elements();
+    const card = elements.create("card");
+    const mount = h("div", {
+      style: "margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fff",
+    });
+    const saveBtn = h("button", { type: "button", class: "btn sm" }, "Save card");
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving…";
+      const { setupIntent, error } = await stripe.confirmCardSetup(clientSecret, {
+        payment_method: { card },
+      });
+      if (error) {
+        errEl.textContent = error.message || "Could not save that card.";
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save card";
+        return;
+      }
+      try {
+        await apiCall("POST", "/api/cleaning/owner/payment-method", {
+          paymentMethodId: setupIntent.payment_method,
+        });
+        onSaved();
+      } catch (e) {
+        errEl.textContent = writeMessage(e);
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save card";
+      }
+    });
+    const wrap = h("div", {}, mount, saveBtn, errEl);
+    card.mount(mount);
+    return wrap;
+  }
+  function renderOwnerCleanRequest(r) {
+    const statusLabel = { open: "open", assigned: "assigned", done: "cleaned", paid: "paid", cancelled: "cancelled" };
+    const box = h(
+      "div",
+      { style: "border:1px solid var(--line);border-radius:8px;padding:8px" },
+      h(
+        "div",
+        { style: "display:flex;justify-content:space-between;gap:6px;align-items:center" },
+        h("strong", { text: r.cleanDate + " · " + cleanMoney(r.askingPriceCents) }),
+        h("span", { class: "pill", text: statusLabel[r.status] || r.status }),
+      ),
+      r.notes ? h("p", { style: "margin:4px 0;font-size:12px;color:var(--muted)", text: r.notes }) : null,
+    );
+    if (r.status === "open") {
+      const cancelBtn = h("button", { type: "button", class: "btn sm danger" }, "Cancel request");
+      cancelBtn.addEventListener("click", async () => {
+        if (!confirm("Cancel this cleaning request?")) return;
+        await apiCall("POST", "/api/cleaning/requests/" + r.id + "/cancel");
+        paintOwnerCleanPanel();
+      });
+      box.append(cancelBtn);
+      const bids = (r.bids || []).filter((b) => b.status === "pending");
+      box.append(
+        bids.length
+          ? h("div", { style: "margin-top:6px;display:flex;flex-direction:column;gap:5px" }, ...bids.map((b) => {
+              const acceptBtn = h("button", { type: "button", class: "btn sm" }, "Accept");
+              acceptBtn.addEventListener("click", async () => {
+                acceptBtn.disabled = true;
+                try {
+                  await apiCall("POST", "/api/cleaning/bids/" + b.id + "/accept");
+                  toast("Bid accepted — the job is now assigned.");
+                  paintOwnerCleanPanel();
+                } catch (e) {
+                  alert(writeMessage(e));
+                  acceptBtn.disabled = false;
+                }
+              });
+              return h(
+                "div",
+                { style: "display:flex;justify-content:space-between;align-items:center;gap:6px;padding-top:5px;border-top:1px dashed var(--line)" },
+                h("span", {
+                  style: "font-size:13px",
+                  text: (b.cleanerName || "A cleaner") + ": " + cleanMoney(b.amountCents) + (b.message ? " — “" + b.message + "”" : ""),
+                }),
+                acceptBtn,
+              );
+            }))
+          : h("p", { style: "margin:6px 0 0;font-size:12px;color:var(--muted)", text: "No bids yet." }),
+      );
+    } else if (r.status === "assigned" || r.status === "done") {
+      const bid = (r.bids || []).find((b) => b.id === r.acceptedBidId);
+      box.append(
+        h("p", {
+          style: "margin:6px 0 0;font-size:13px",
+          text: "Accepted: " + (bid ? bid.cleanerName : "cleaner") + " for " + cleanMoney(bid ? bid.amountCents : 0),
+        }),
+      );
+      if (bid && bid.cleanerMarkedDoneAt) {
+        const confirmBtn = h("button", { type: "button", class: "btn sm" }, "Confirm done & release payment");
+        confirmBtn.addEventListener("click", async () => {
+          confirmBtn.disabled = true;
+          try {
+            await apiCall("POST", "/api/cleaning/bids/" + bid.id + "/confirm");
+            toast("Confirmed — payment released.");
+            paintOwnerCleanPanel();
+          } catch (e) {
+            alert(writeMessage(e));
+            confirmBtn.disabled = false;
+          }
+        });
+        box.append(confirmBtn);
+      } else {
+        box.append(
+          h("p", { style: "margin:4px 0 0;font-size:12px;color:var(--muted)", text: "Waiting for the cleaner to mark this done." }),
+        );
+      }
+    } else if (r.status === "paid") {
+      const bid = (r.bids || []).find((b) => b.id === r.acceptedBidId);
+      box.append(
+        h("p", {
+          style: "margin:6px 0 0;font-size:13px;color:#146C43",
+          text: "✓ Paid " + cleanMoney(bid ? bid.amountCents : 0) + " to " + (bid ? bid.cleanerName : "cleaner"),
+        }),
+      );
+    }
+    return box;
+  }
+  async function paintOwnerCleanPanel() {
+    const panel = getOwnerCleanPanel();
+    panel.replaceChildren(h("p", { text: "Loading…" }));
+    let payStatus, reqs;
+    try {
+      payStatus = await apiCall("GET", "/api/cleaning/owner/payment-status");
+      reqs = await apiCall("GET", "/api/cleaning/my-requests");
+    } catch (e) {
+      panel.replaceChildren(
+        h("button", { class: "close", type: "button", onclick: closeOwnerCleaningPanel }, "×"),
+        h("h3", { text: "Cleaning" }),
+        h("p", { class: "err", text: writeMessage(e) }),
+      );
+      return;
+    }
+    const payBox = h("div", {
+      style: "margin:8px 0;padding:8px;background:var(--bg);border-radius:8px;font-size:13px",
+    });
+    if (!payStatus.stripeConfigured) {
+      payBox.append(
+        h("p", {
+          style: "margin:0;color:var(--muted)",
+          text: "Payments aren’t turned on for the site yet — you can still post requests and review bids; accepting one needs Stripe set up first.",
+        }),
+      );
+    } else if (payStatus.hasCard) {
+      payBox.append(h("p", { style: "margin:0", text: "✓ Card on file — you can accept bids." }));
+    } else {
+      const addBtn = h("button", { type: "button", class: "btn sm" }, "Add a payment method");
+      const holder = h("div");
+      payBox.append(
+        h("p", {
+          style: "margin:0 0 6px",
+          text: "Add a card before accepting a bid. It's only ever charged once a clean is done and you confirm it.",
+        }),
+        addBtn,
+        holder,
+      );
+      addBtn.addEventListener("click", async () => {
+        addBtn.disabled = true;
+        try {
+          const setup = await apiCall("POST", "/api/cleaning/owner/payment-setup");
+          holder.replaceChildren(
+            await mountCardForm(setup.clientSecret, setup.publishableKey, () => {
+              toast("Card saved.");
+              paintOwnerCleanPanel();
+            }),
+          );
+        } catch (e) {
+          holder.replaceChildren(h("p", { class: "err", text: writeMessage(e) }));
+        }
+      });
+    }
+    const dateInput = h("input", { type: "date", min: todayStr() });
+    const priceInput = h("input", { type: "number", min: "1", step: "0.01", placeholder: "Asking price ($)" });
+    const notesInput = h("textarea", {
+      placeholder: "Anything the cleaner should know (optional)",
+      style: "min-height:46px",
+    });
+    const formErr = h("div", { class: "err" });
+    const postBtn = h("button", { type: "button", class: "btn sm" }, "Post cleaning request");
+    postBtn.addEventListener("click", async () => {
+      formErr.textContent = "";
+      postBtn.disabled = true;
+      try {
+        await apiCall("POST", "/api/cleaning/requests", {
+          cleanDate: dateInput.value,
+          askingPrice: priceInput.value,
+          notes: notesInput.value,
+        });
+        toast("Cleaning request posted.");
+        paintOwnerCleanPanel();
+      } catch (e) {
+        formErr.textContent = writeMessage(e);
+        postBtn.disabled = false;
+      }
+    });
+    const list = h(
+      "div",
+      { style: "display:flex;flex-direction:column;gap:10px;margin-top:12px" },
+      ...(reqs.length
+        ? reqs.map(renderOwnerCleanRequest)
+        : [h("p", { style: "color:var(--muted);font-size:13px", text: "No cleaning requests yet." })]),
+    );
+    panel.replaceChildren(
+      h("button", { class: "close", type: "button", onclick: closeOwnerCleaningPanel }, "×"),
+      h("h3", { text: "Cleaning" }),
+      payBox,
+      h(
+        "div",
+        { style: "border-top:1px solid var(--line);padding-top:10px" },
+        h("span", { class: "lbl", style: "font-size:13px;font-weight:600", text: "Request a clean" }),
+        h(
+          "div",
+          { style: "display:flex;flex-direction:column;gap:6px;margin-top:6px" },
+          dateInput,
+          priceInput,
+          notesInput,
+          postBtn,
+          formErr,
+        ),
+      ),
+      list,
+    );
+  }
+
+  /* ---- cleaner: open jobs shown as map markers, bid, mark done ---- */
+  let cleanerJobsPanel = null;
+  function getCleanerJobsPanel() {
+    if (!cleanerJobsPanel) {
+      cleanerJobsPanel = h("div", { class: "clean-panel", style: "z-index:60", hidden: true });
+      document.body.append(cleanerJobsPanel);
+    }
+    return cleanerJobsPanel;
+  }
+  function ensureCleanLayer() {
+    if (!layers.cleanjobs) {
+      layers.cleanjobs = sv("g", { class: "cleanjobs" });
+      svg.append(layers.cleanjobs);
+    }
+    return layers.cleanjobs;
+  }
+  function clearCleanMarkers() {
+    if (layers.cleanjobs) layers.cleanjobs.replaceChildren();
+  }
+  function paintCleanMarkers(jobs) {
+    const g = ensureCleanLayer();
+    g.replaceChildren(
+      ...jobs.map((job) => {
+        const mk = sv("g", {
+          transform: `translate(${job.pinX * MAP.W} ${job.pinY * MAP.H})`,
+          style: "cursor:pointer",
+        });
+        mk.append(
+          sv("circle", { r: 9, fill: "#E5533D", stroke: "#fff", "stroke-width": 2 }),
+          sv("circle", { r: 2.6, cx: -2.5, cy: -2.5, fill: "#fff", opacity: 0.9 }),
+          sv("circle", { r: 1.6, cx: 2.5, cy: 1.5, fill: "#fff", opacity: 0.7 }),
+        );
+        mk.addEventListener("click", () => {
+          flyTo(job.pinX * MAP.W, job.pinY * MAP.H, 3);
+          if (getCleanerJobsPanel().hidden) openCleanerJobsPanel();
+          setTimeout(() => {
+            const row = $("#job-row-" + job.id);
+            if (row) {
+              row.scrollIntoView({ block: "center" });
+              row.style.outline = "2px solid var(--accent)";
+              setTimeout(() => (row.style.outline = ""), 1500);
+            }
+          }, 60);
+        });
+        return mk;
+      }),
+    );
+  }
+  function renderOpenCleanJob(job) {
+    const box = h(
+      "div",
+      { id: "job-row-" + job.id, style: "border:1px solid var(--line);border-radius:8px;padding:8px" },
+      h("strong", { text: job.pinTitle + " · " + job.cleanDate }),
+      h("p", {
+        style: "margin:2px 0;font-size:12px;color:var(--muted)",
+        text: "Owner is asking " + cleanMoney(job.askingPriceCents) + (job.pinAddress ? " · " + job.pinAddress : ""),
+      }),
+      job.notes ? h("p", { style: "margin:2px 0;font-size:12px", text: job.notes }) : null,
+    );
+    if (job.myBid) {
+      const wBtn = h("button", { type: "button", class: "btn sm" }, "Withdraw bid");
+      wBtn.addEventListener("click", async () => {
+        await apiCall("POST", "/api/cleaning/bids/" + job.myBid.id + "/withdraw");
+        paintCleanerJobsPanel();
+      });
+      box.append(
+        h("div", { style: "margin-top:6px;font-size:13px" }, "Your bid: " + cleanMoney(job.myBid.amountCents) + " (pending)"),
+        wBtn,
+      );
+    } else {
+      const amt = h("input", {
+        type: "number",
+        min: "1",
+        step: "0.01",
+        value: (job.askingPriceCents / 100).toFixed(2),
+        style: "width:90px",
+      });
+      const msg = h("input", { type: "text", placeholder: "Note (optional)", style: "flex:1;min-width:80px" });
+      const err = h("div", { class: "err" });
+      const bidBtn = h("button", { type: "button", class: "btn sm" }, "Bid");
+      bidBtn.addEventListener("click", async () => {
+        bidBtn.disabled = true;
+        try {
+          await apiCall("POST", "/api/cleaning/bids", { requestId: job.id, amount: amt.value, message: msg.value });
+          toast("Bid submitted.");
+          paintCleanerJobsPanel();
+        } catch (e) {
+          err.textContent = writeMessage(e);
+          bidBtn.disabled = false;
+        }
+      });
+      box.append(
+        h("div", { style: "display:flex;gap:6px;margin-top:6px;align-items:center;flex-wrap:wrap" }, "$", amt, msg, bidBtn),
+        err,
+      );
+    }
+    return box;
+  }
+  function renderMyAcceptedJob(b) {
+    const box = h(
+      "div",
+      { style: "border:1px solid var(--line);border-radius:8px;padding:8px" },
+      h("strong", { text: b.pinTitle + " · " + b.cleanDate }),
+      h("p", {
+        style: "margin:2px 0;font-size:12px;color:var(--muted)",
+        text: "Your bid: " + cleanMoney(b.amountCents) + (b.payoutCents ? " · you get " + cleanMoney(b.payoutCents) : ""),
+      }),
+    );
+    if (!b.cleanerMarkedDoneAt) {
+      const doneBtn = h("button", { type: "button", class: "btn sm" }, "Mark done");
+      doneBtn.addEventListener("click", async () => {
+        await apiCall("POST", "/api/cleaning/bids/" + b.id + "/mark-done");
+        toast("Marked done — waiting on the owner to confirm.");
+        paintCleanerJobsPanel();
+      });
+      box.append(doneBtn);
+    } else if (!b.ownerConfirmedAt) {
+      box.append(
+        h("p", {
+          style: "margin:4px 0 0;font-size:12px;color:var(--muted)",
+          text: "Marked done — waiting for the owner to confirm and release payment.",
+        }),
+      );
+    } else {
+      box.append(
+        h("p", { style: "margin:4px 0 0;font-size:13px;color:#146C43", text: "✓ Paid " + cleanMoney(b.payoutCents) }),
+      );
+    }
+    return box;
+  }
+  async function paintCleanerJobsPanel() {
+    const panel = getCleanerJobsPanel();
+    panel.replaceChildren(h("p", { text: "Loading…" }));
+    let jobs, mine, payout;
+    try {
+      jobs = await apiCall("GET", "/api/cleaning/open");
+      mine = await apiCall("GET", "/api/cleaning/my-bids");
+      payout = await apiCall("GET", "/api/cleaning/cleaner/payout-status");
+    } catch (e) {
+      panel.replaceChildren(
+        h("button", { class: "close", type: "button", onclick: closeCleanerJobsPanel }, "×"),
+        h("p", { class: "err", text: writeMessage(e) }),
+      );
+      return;
+    }
+    paintCleanMarkers(jobs);
+    const payBox = h("div", { style: "margin:8px 0;font-size:12px;color:var(--muted)" });
+    if (!payout.stripeConfigured) {
+      payBox.textContent = "Payments aren’t turned on for the site yet.";
+    } else if (!payout.payoutsReady) {
+      const btn = h("button", { type: "button", class: "btn sm" }, "Set up payouts");
+      btn.addEventListener("click", async () => {
+        const res = await apiCall("POST", "/api/cleaning/cleaner/payout-setup");
+        location.href = res.url;
+      });
+      payBox.replaceChildren("Add your payout details before you can get paid for a job. ", btn);
+    } else {
+      payBox.textContent = "✓ Payouts are set up.";
+    }
+    const activeBids = mine.filter((b) => b.status === "accepted");
+    panel.replaceChildren(
+      h("button", { class: "close", type: "button", onclick: closeCleanerJobsPanel }, "×"),
+      h("h3", { text: "Cleaning jobs" }),
+      payBox,
+      h("h4", { style: "margin:10px 0 4px;font-size:13px", text: "Open jobs" }),
+      h(
+        "div",
+        { style: "display:flex;flex-direction:column;gap:8px" },
+        ...(jobs.length
+          ? jobs.map(renderOpenCleanJob)
+          : [h("p", { style: "color:var(--muted);font-size:13px", text: "No open cleaning jobs right now." })]),
+      ),
+      h("h4", { style: "margin:14px 0 4px;font-size:13px", text: "My accepted jobs" }),
+      h(
+        "div",
+        { style: "display:flex;flex-direction:column;gap:8px" },
+        ...(activeBids.length
+          ? activeBids.map(renderMyAcceptedJob)
+          : [h("p", { style: "color:var(--muted);font-size:13px", text: "No accepted jobs yet." })]),
+      ),
+    );
+  }
+  function openCleanerJobsPanel() {
+    getCleanerJobsPanel().hidden = false;
+    paintCleanerJobsPanel();
+  }
+  function closeCleanerJobsPanel() {
+    if (cleanerJobsPanel) cleanerJobsPanel.hidden = true;
+    clearCleanMarkers();
+  }
 })();
