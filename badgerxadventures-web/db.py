@@ -52,6 +52,15 @@ def _migrate(conn):
     if "link_pin_id" not in ad_cols:
         conn.execute("ALTER TABLE ads ADD COLUMN link_pin_id INTEGER")
 
+    # An owner's saved card, for the cabin-cleaning marketplace -- set once
+    # they add a payment method, so a bid can be authorized the moment they
+    # accept it without asking them to re-enter their card every time.
+    owner_cols = {row["name"] for row in conn.execute("PRAGMA table_info(owners)")}
+    if "stripe_customer_id" not in owner_cols:
+        conn.execute("ALTER TABLE owners ADD COLUMN stripe_customer_id TEXT")
+    if "stripe_payment_method_id" not in owner_cols:
+        conn.execute("ALTER TABLE owners ADD COLUMN stripe_payment_method_id TEXT")
+
 
 def row_to_dict(row):
     return dict(row) if row is not None else None
