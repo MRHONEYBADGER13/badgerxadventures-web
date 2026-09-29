@@ -151,6 +151,25 @@ def record_visit():
     conn.commit()
 
 
+def record_visitor_log(path):
+    """A rolling 24-hour log of real page views -- unlike record_visit
+    above, which only ever stores a hashed IP for the counter, this keeps
+    the real address so the admin's Visitors panel can show who's actually
+    on the site and ban anyone unwanted. Every insert also sweeps out
+    anything older than a day, so nothing here is ever kept longer than
+    that."""
+    ip = _client_ip()
+    if not ip:
+        return
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO visitor_log (ip, path, created_at) VALUES (?, ?, datetime('now'))",
+        (ip, path),
+    )
+    conn.execute("DELETE FROM visitor_log WHERE created_at < datetime('now', '-1 day')")
+    conn.commit()
+
+
 # A permanently banned IP is blocked from the whole site -- everywhere
 # except the admin dashboard itself (so an admin can never lock themselves
 # out) and static assets. This is separate from -- and stronger than -- a
@@ -373,6 +392,7 @@ def valid_xy(x, y):
 @app.route("/")
 def index():
     record_visit()
+    record_visitor_log(request.path)
     role = compute_role()
     pins, stays = fetch_docs()
     state = {"v": 1, "pins": pins, "stays": stays}
@@ -723,6 +743,32 @@ def api_admin_visits():
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     today_n = conn.execute("SELECT COUNT(*) AS n FROM site_visits WHERE day = ?", (today,)).fetchone()["n"]
     return jsonify({"total": total, "today": today_n})
+
+
+@app.route("/api/admin/visitor-log", methods=["GET"])
+@admin_required
+def api_admin_visitor_log():
+    """Everyone who's loaded the page in the last 24 hours, one row per IP --
+    so the admin can see who's on the site and ban anyone unwanted straight
+    from this list."""
+    conn = get_db()
+    conn.execute("DELETE FROM visitor_log WHERE created_at < datetime('now', '-1 day')")
+    conn.commit()
+    rows = conn.execute(
+        "SELECT ip, COUNT(*) AS hits, MIN(created_at) AS first_at, MAX(created_at) AS last_at "
+        "FROM visitor_log GROUP BY ip ORDER BY last_at DESC"
+    ).fetchall()
+    banned = {r["ip"] for r in conn.execute("SELECT ip FROM banned_ips").fetchall()}
+    return jsonify([
+        {
+            "ip": r["ip"],
+            "hits": r["hits"],
+            "firstAt": _to_ms(r["first_at"]),
+            "lastAt": _to_ms(r["last_at"]),
+            "banned": r["ip"] in banned,
+        }
+        for r in rows
+    ])
 
 
 @app.route("/api/admin/codes", methods=["GET"])
