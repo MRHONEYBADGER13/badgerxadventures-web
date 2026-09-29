@@ -58,6 +58,18 @@ def read_owner_token(token: str, max_age=60 * 60 * 24 * 30):
         return None
 
 
+def make_cleaner_token(cleaner_id: int) -> str:
+    return _serializer("cleaner-session").dumps({"cleaner_id": cleaner_id})
+
+
+def read_cleaner_token(token: str, max_age=60 * 60 * 24 * 30):
+    try:
+        data = _serializer("cleaner-session").loads(token, max_age=max_age)
+        return data.get("cleaner_id")
+    except (BadSignature, SignatureExpired):
+        return None
+
+
 def make_admin_token(admin_id: int) -> str:
     return _serializer("admin-session").dumps({"admin_id": admin_id})
 
