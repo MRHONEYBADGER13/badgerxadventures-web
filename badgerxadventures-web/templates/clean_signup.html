@@ -1,0 +1,197 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Become a cleaner — BADGERxADVENTURES</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top"><div class="brand">BADGERxADVENTURES</div><nav><a href="/">Back to map</a></nav></header>
+<div class="center-form" id="box">Loading&hellip;</div>
+<script>
+const box = document.getElementById('box');
+
+async function me() {
+  const res = await fetch('/api/cleaner/me');
+  return res.json();
+}
+
+function el(html) {
+  const t = document.createElement('template');
+  t.innerHTML = html.trim();
+  return t.content.firstChild;
+}
+
+function renderSignedOut() {
+  box.replaceChildren(el(`
+    <div>
+      <h2>Clean cabins, get paid</h2>
+      <p style="color:var(--muted);font-size:14px">
+        Sign up to see cabins on the lake that need a clean between guests. Cabin owners post the
+        job and a price -- you can bid your own price back. Once an owner accepts your bid we hold
+        their payment until you mark the job done and they confirm it, then it's paid straight to
+        you through the app.
+      </p>
+      <form id="signup-f">
+        <label>Your name</label>
+        <input name="name" required>
+        <label>Email</label>
+        <input name="email" type="email" required>
+        <label>Phone</label>
+        <input name="phone" type="tel" placeholder="optional, but owners may want to text you">
+        <label>Password</label>
+        <input name="password" type="password" minlength="8" required>
+      </form>
+      <button form="signup-f">Sign up to clean</button>
+      <div class="error-msg" id="signup-err" hidden></div>
+      <a class="muted-link" href="#" id="show-login">Already signed up? Log in</a>
+    </div>
+  `));
+  document.getElementById('signup-f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('signup-err'); err.hidden = true;
+    const fd = new FormData(e.target);
+    const res = await fetch('/api/cleaner/signup', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name: fd.get('name'), email: fd.get('email'),
+        phone: fd.get('phone'), password: fd.get('password'),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Something went wrong.'; err.hidden = false; return; }
+    boot();
+  });
+  document.getElementById('show-login').addEventListener('click', (e) => {
+    e.preventDefault();
+    renderLogin();
+  });
+}
+
+function renderLogin() {
+  box.replaceChildren(el(`
+    <div>
+      <h2>Cleaner log in</h2>
+      <form id="login-f">
+        <label>Email</label>
+        <input name="email" type="email" required>
+        <label>Password</label>
+        <input name="password" type="password" required>
+      </form>
+      <button form="login-f">Log in</button>
+      <div class="error-msg" id="login-err" hidden></div>
+      <a class="muted-link" href="#" id="show-signup">Need an account? Sign up</a>
+    </div>
+  `));
+  document.getElementById('login-f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('login-err'); err.hidden = true;
+    const fd = new FormData(e.target);
+    const res = await fetch('/api/cleaner/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email: fd.get('email'), password: fd.get('password')}),
+    });
+    const data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Something went wrong.'; err.hidden = false; return; }
+    boot();
+  });
+  document.getElementById('show-signup').addEventListener('click', (e) => {
+    e.preventDefault();
+    renderSignedOut();
+  });
+}
+
+function logout() {
+  fetch('/api/cleaner/logout', {method: 'POST'}).then(boot);
+}
+
+async function renderPending() {
+  box.replaceChildren(el(`
+    <div>
+      <h2>You're signed up</h2>
+      <p style="color:var(--muted);font-size:14px">
+        Your cleaner account is waiting on approval from BADGERxADVENTURES before you can see or
+        bid on jobs -- this is just a quick check since you'll be going into people's cabins. Check
+        back soon.
+      </p>
+      <a class="muted-link" href="#" id="lo">Log out</a>
+    </div>
+  `));
+  document.getElementById('lo').addEventListener('click', (e) => { e.preventDefault(); logout(); });
+}
+
+async function renderRejected() {
+  box.replaceChildren(el(`
+    <div>
+      <h2>Application not approved</h2>
+      <p style="color:var(--muted);font-size:14px">
+        Your cleaner account wasn't approved. If you think that's a mistake, reach out to
+        BADGERxADVENTURES@gmail.com.
+      </p>
+      <a class="muted-link" href="#" id="lo">Log out</a>
+    </div>
+  `));
+  document.getElementById('lo').addEventListener('click', (e) => { e.preventDefault(); logout(); });
+}
+
+async function renderApproved(data) {
+  box.replaceChildren(el(`
+    <div>
+      <h2>You're approved, ${escapeHtml(data.name || '')}!</h2>
+      <p style="color:var(--muted);font-size:14px">
+        Open the map to see cabins that need cleaning -- they show up as their own pins once you're
+        logged in. Tap "Cleaning jobs" on the map to switch to that view.
+      </p>
+      <a href="/"><button type="button">Go see cleaning jobs</button></a>
+      <div id="payout-box" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+        <p style="font-size:13px;font-weight:600;margin:0 0 6px">Get paid</p>
+        <p id="payout-status" style="color:var(--muted);font-size:13px;margin:0 0 10px"></p>
+        <button type="button" id="payout-btn" class="btn-sm">Set up payouts with Stripe</button>
+      </div>
+      <a class="muted-link" href="#" id="lo">Log out</a>
+    </div>
+  `));
+  document.getElementById('lo').addEventListener('click', (e) => { e.preventDefault(); logout(); });
+  const statusEl = document.getElementById('payout-status');
+  const btn = document.getElementById('payout-btn');
+  try {
+    const st = await fetch('/api/cleaning/cleaner/payout-status').then(r => r.json());
+    if (!st.stripeConfigured) {
+      statusEl.textContent = 'Payments aren’t turned on for the site yet -- check back later.';
+      btn.hidden = true;
+    } else if (st.payoutsReady) {
+      statusEl.textContent = 'Payouts are set up — you’re ready to get paid for jobs.';
+      btn.textContent = 'Update payout details';
+    } else {
+      statusEl.textContent = 'Add your payout details (bank account) so you can actually get paid once a job is done.';
+    }
+  } catch (_) { statusEl.textContent = ''; }
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; btn.textContent = 'Loading…';
+    try {
+      const res = await fetch('/api/cleaning/cleaner/payout-setup', {method: 'POST'});
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+      location.href = data.url;
+    } catch (e) {
+      statusEl.textContent = e.message;
+      btn.disabled = false; btn.textContent = 'Set up payouts with Stripe';
+    }
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function boot() {
+  const data = await me();
+  if (data.kind !== 'cleaner') { renderSignedOut(); return; }
+  if (data.status === 'pending') { renderPending(); return; }
+  if (data.status === 'rejected') { renderRejected(); return; }
+  renderApproved(data);
+}
+boot();
+</script>
+</body>
+</html>
