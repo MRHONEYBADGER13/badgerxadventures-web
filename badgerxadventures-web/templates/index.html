@@ -192,6 +192,11 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.01em;text-wrap:bal
 .poicard .pfoot{margin-top:4px;font-size:11px;color:var(--muted)}
 .poicard button{flex:none;width:30px;height:30px;border:0;background:transparent;border-radius:8px;font-size:20px;line-height:1;color:var(--muted)}
 .poicard button:hover{background:var(--field)}
+.clean-panel{position:fixed;right:12px;top:70px;width:min(360px,calc(100% - 24px));max-height:calc(100vh - 100px);overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:14px}
+.clean-panel h3{margin:0 0 4px;font-family:var(--display)}
+.clean-panel h4{margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.clean-panel input,.clean-panel textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;font-family:inherit;background:var(--card);color:var(--ink)}
+.clean-panel .close{position:absolute;right:10px;top:8px;border:0;background:none;font-size:18px;cursor:pointer;color:var(--muted);line-height:1}
 .maptitle{font-family:var(--display);font-weight:800;fill:var(--map-text);opacity:.55;letter-spacing:.16em}
 .mapsub{font-family:var(--body);font-weight:500;fill:var(--map-text);opacity:.6;letter-spacing:.06em}
 .lk{font-family:var(--body);font-weight:700;fill:#fff;opacity:.7;letter-spacing:.4em;text-transform:uppercase}
@@ -874,6 +879,7 @@ a.btn{color:var(--ink);text-decoration:none}
 <script type="application/json" id="state">{{ state_json|safe }}</script>
 <script type="application/json" id="wx-data">{{ wx_json|safe }}</script>
 <script type="application/json" id="role">{{ role_json|safe }}</script>
+<script type="application/json" id="cleaner">{{ cleaner_json|safe }}</script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 
 </body></html>
