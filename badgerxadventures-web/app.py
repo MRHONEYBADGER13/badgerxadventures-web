@@ -14,6 +14,7 @@ edit or delete any pin, and only the admin can generate invite codes.
 import hashlib
 import json
 import os
+import re
 import smtplib
 import ssl
 import uuid
@@ -39,6 +40,29 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 SMTP_USER = os.environ.get("SMTP_USER", "badgerxadventures@gmail.com")
 SMTP_PASS = os.environ.get("SMTP_PASS")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
+
+# ---------- Stripe (cabin-cleaning marketplace payments) ----------
+# Like SMTP_PASS above, these are set as environment variables in Render,
+# never in this file. STRIPE_SECRET_KEY is the server-side key that talks to
+# Stripe's API; STRIPE_PUBLISHABLE_KEY is the public one the browser uses to
+# collect card details safely (it's fine for it to be visible client-side --
+# that's what it's for). Without them, stripe_ready() below is False and
+# every payment route fails with a clear message instead of crashing --
+# everything else in the cleaning marketplace (signup, the calendar,
+# bidding) works fine before Stripe is ever configured.
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY")
+CLEAN_COMMISSION_PCT = 15  # BADGERxADVENTURES' cut of every accepted cleaning bid; cleaner keeps the rest
+try:
+    import stripe as _stripe
+    if STRIPE_SECRET_KEY:
+        _stripe.api_key = STRIPE_SECRET_KEY
+except ImportError:
+    _stripe = None
+
+
+def stripe_ready():
+    return bool(_stripe and STRIPE_SECRET_KEY)
 
 # Fixed, non-secret salt for the site-visit counter below -- just enough to
 # keep a hashed IP from being trivially looked up in a plain SHA-256 rainbow
@@ -232,6 +256,47 @@ def admin_required(fn):
     return wrapper
 
 
+def current_cleaner_id():
+    token = request.cookies.get("cleaner_session")
+    if not token:
+        return None
+    return auth.read_cleaner_token(token)
+
+
+def cleaner_required(fn):
+    """Like owner_required, but also blocks anyone whose cleaner account
+    hasn't been approved yet -- they'll be going into people's private
+    cabins, so every job-facing route needs an admin's sign-off first."""
+    @wraps(fn)
+    def wrapper(*a, **kw):
+        cid = current_cleaner_id()
+        if not cid:
+            return jsonify({"error": "not logged in"}), 401
+        conn = get_db()
+        cleaner = conn.execute("SELECT * FROM cleaners WHERE id = ?", (cid,)).fetchone()
+        if not cleaner:
+            return jsonify({"error": "not logged in"}), 401
+        if cleaner["status"] != "approved":
+            return jsonify({"error": "Your cleaner account is still waiting on approval."}), 403
+        g.cleaner_id = cid
+        g.cleaner = cleaner
+        return fn(*a, **kw)
+    return wrapper
+
+
+def compute_cleaner_role():
+    """Same idea as compute_role() below, but for the separate cleaner
+    login -- embedded in the themed map page so the client knows whether to
+    offer the 'cleaning jobs' view on the map."""
+    cid = current_cleaner_id()
+    if not cid:
+        return {"kind": "guest", "cleanerId": None, "status": None}
+    row = get_db().execute("SELECT id, status FROM cleaners WHERE id = ?", (cid,)).fetchone()
+    if not row:
+        return {"kind": "guest", "cleanerId": None, "status": None}
+    return {"kind": "cleaner", "cleanerId": row["id"], "status": row["status"]}
+
+
 def compute_role():
     """What the themed page (and the API) treats this visitor as: a browsing
     guest, a signed-in business/stay/pin owner, or the admin. Computed from
@@ -394,6 +459,7 @@ def index():
     record_visit()
     record_visitor_log(request.path)
     role = compute_role()
+    cleaner_role = compute_cleaner_role()
     pins, stays = fetch_docs()
     state = {"v": 1, "pins": pins, "stays": stays}
     wx = weather.get_weather()
@@ -402,12 +468,21 @@ def index():
         state_json=json.dumps(state),
         wx_json=json.dumps(wx),
         role_json=json.dumps(role),
+        cleaner_json=json.dumps(cleaner_role),
     )
 
 
 @app.route("/redeem")
 def redeem_page():
     return render_template("redeem.html")
+
+
+@app.route("/clean")
+def clean_signup_page():
+    """The separate public page for signing up (or logging in) to be a
+    cleaner -- linked from nowhere on the main map on purpose, so it's the
+    one place someone has to go looking for to become a cleaner."""
+    return render_template("clean_signup.html")
 
 
 @app.route("/advertise")
@@ -1822,6 +1897,543 @@ def api_admin_chat_warn():
         "INSERT INTO chat_warnings (session_id, owner_id, name_lower, text) VALUES (?, ?, ?, ?)",
         (target["session_id"], target["owner_id"], target["name_lower"], text),
     )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+# ---------- cabin cleaning marketplace ----------
+
+def _owner_stay_pin(conn, owner_id):
+    return conn.execute(
+        "SELECT * FROM pins WHERE owner_id = ? AND pin_type = 'stay'", (owner_id,)
+    ).fetchone()
+
+
+def cleaning_bid_to_dict(row):
+    keys = row.keys()
+    return {
+        "id": row["id"],
+        "requestId": row["request_id"],
+        "cleanerId": row["cleaner_id"],
+        "cleanerName": row["cleaner_name"] if "cleaner_name" in keys else None,
+        "amountCents": row["amount_cents"],
+        "message": row["message"],
+        "status": row["status"],
+        "commissionCents": row["commission_cents"],
+        "payoutCents": row["payout_cents"],
+        "cleanerMarkedDoneAt": _to_ms(row["cleaner_marked_done_at"]),
+        "ownerConfirmedAt": _to_ms(row["owner_confirmed_at"]),
+        "createdAt": _to_ms(row["created_at"]),
+    }
+
+
+def cleaning_request_to_dict(conn, row, include_bids=False):
+    d = {
+        "id": row["id"],
+        "pinId": row["pin_id"],
+        "cleanDate": row["clean_date"],
+        "askingPriceCents": row["asking_price_cents"],
+        "notes": row["notes"],
+        "status": row["status"],
+        "acceptedBidId": row["accepted_bid_id"],
+        "createdAt": _to_ms(row["created_at"]),
+    }
+    if include_bids:
+        bids = conn.execute(
+            "SELECT b.*, c.name AS cleaner_name FROM cleaning_bids b "
+            "JOIN cleaners c ON c.id = b.cleaner_id WHERE b.request_id = ? "
+            "AND b.status != 'withdrawn' ORDER BY b.amount_cents ASC",
+            (row["id"],),
+        ).fetchall()
+        d["bids"] = [cleaning_bid_to_dict(b) for b in bids]
+    return d
+
+
+# ---- cleaner accounts (separate signup, no invite code) ----
+
+@app.route("/api/cleaner/signup", methods=["POST"])
+def api_cleaner_signup():
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    phone = (data.get("phone") or "").strip()
+    password = data.get("password") or ""
+    if not name or not email or len(password) < 8:
+        return jsonify({"error": "Enter your name, an email, and a password (8+ characters)."}), 400
+    conn = get_db()
+    if conn.execute("SELECT 1 FROM cleaners WHERE email = ?", (email,)).fetchone():
+        return jsonify({"error": "That email already has a cleaner account."}), 409
+    pw_hash = auth.hash_password(password)
+    cur = conn.execute(
+        "INSERT INTO cleaners (name, email, phone, password_hash) VALUES (?, ?, ?, ?)",
+        (name, email, phone, pw_hash),
+    )
+    conn.commit()
+    resp = jsonify({"ok": True, "status": "pending"})
+    token = auth.make_cleaner_token(cur.lastrowid)
+    resp.set_cookie("cleaner_session", token, httponly=True, samesite="Lax", max_age=60 * 60 * 24 * 30)
+    return resp
+
+
+@app.route("/api/cleaner/login", methods=["POST"])
+def api_cleaner_login():
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM cleaners WHERE email = ?", (email,)).fetchone()
+    if not row or not auth.verify_password(password, row["password_hash"]):
+        return jsonify({"error": "Wrong email or password."}), 401
+    resp = jsonify({"ok": True, "status": row["status"]})
+    token = auth.make_cleaner_token(row["id"])
+    resp.set_cookie("cleaner_session", token, httponly=True, samesite="Lax", max_age=60 * 60 * 24 * 30)
+    return resp
+
+
+@app.route("/api/cleaner/logout", methods=["POST"])
+def api_cleaner_logout():
+    resp = jsonify({"ok": True})
+    resp.delete_cookie("cleaner_session")
+    return resp
+
+
+@app.route("/api/cleaner/me", methods=["GET"])
+def api_cleaner_me():
+    cid = current_cleaner_id()
+    if not cid:
+        return jsonify({"kind": "guest"})
+    row = get_db().execute("SELECT * FROM cleaners WHERE id = ?", (cid,)).fetchone()
+    if not row:
+        return jsonify({"kind": "guest"})
+    return jsonify({
+        "kind": "cleaner",
+        "name": row["name"],
+        "email": row["email"],
+        "status": row["status"],
+        "payoutsReady": bool(row["stripe_payouts_ready"]),
+    })
+
+
+# ---- owner side: request a clean, review bids ----
+
+@app.route("/api/cleaning/my-requests", methods=["GET"])
+@owner_required
+def api_cleaning_my_requests():
+    conn = get_db()
+    pin = _owner_stay_pin(conn, g.owner_id)
+    if not pin:
+        return jsonify({"error": "This is only for cabin/stay listings."}), 400
+    rows = conn.execute(
+        "SELECT * FROM cleaning_requests WHERE owner_id = ? ORDER BY clean_date DESC", (g.owner_id,)
+    ).fetchall()
+    return jsonify([cleaning_request_to_dict(conn, r, include_bids=True) for r in rows])
+
+
+@app.route("/api/cleaning/requests", methods=["POST"])
+@owner_required
+def api_cleaning_requests_create():
+    conn = get_db()
+    pin = _owner_stay_pin(conn, g.owner_id)
+    if not pin:
+        return jsonify({"error": "Place your cabin/stay pin first."}), 400
+    data = request.get_json(force=True) or {}
+    clean_date = (data.get("cleanDate") or "").strip()
+    notes = str(data.get("notes") or "")[:400]
+    try:
+        cents = round(float(data.get("askingPrice")) * 100)
+    except (TypeError, ValueError):
+        cents = 0
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", clean_date):
+        return jsonify({"error": "Pick a date for the clean."}), 400
+    if cents <= 0:
+        return jsonify({"error": "Set an asking price above $0."}), 400
+    cur = conn.execute(
+        "INSERT INTO cleaning_requests (pin_id, owner_id, clean_date, asking_price_cents, notes) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (pin["id"], g.owner_id, clean_date, cents, notes),
+    )
+    conn.commit()
+    return jsonify({"ok": True, "id": cur.lastrowid})
+
+
+@app.route("/api/cleaning/requests/<int:req_id>/cancel", methods=["POST"])
+@owner_required
+def api_cleaning_requests_cancel(req_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM cleaning_requests WHERE id = ? AND owner_id = ?", (req_id, g.owner_id)
+    ).fetchone()
+    if not row:
+        return jsonify({"error": "Not found."}), 404
+    if row["status"] != "open":
+        return jsonify({"error": "Only an open request, with no accepted bid, can be cancelled."}), 409
+    conn.execute(
+        "UPDATE cleaning_requests SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?", (req_id,)
+    )
+    conn.execute(
+        "UPDATE cleaning_bids SET status = 'declined' WHERE request_id = ? AND status = 'pending'", (req_id,)
+    )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cleaning/bids/<int:bid_id>/accept", methods=["POST"])
+@owner_required
+def api_cleaning_bids_accept(bid_id):
+    """Accepting a bid is the moment the owner's card is AUTHORIZED (held,
+    not charged) for that bid's full amount -- it's only actually charged,
+    and the cleaner paid, once the cleaner marks the job done and the owner
+    confirms it below."""
+    conn = get_db()
+    bid = conn.execute("SELECT * FROM cleaning_bids WHERE id = ?", (bid_id,)).fetchone()
+    if not bid:
+        return jsonify({"error": "Not found."}), 404
+    req = conn.execute(
+        "SELECT * FROM cleaning_requests WHERE id = ? AND owner_id = ?", (bid["request_id"], g.owner_id)
+    ).fetchone()
+    if not req:
+        return jsonify({"error": "Not found."}), 404
+    if req["status"] != "open":
+        return jsonify({"error": "This request already has an accepted bid."}), 409
+    if bid["status"] != "pending":
+        return jsonify({"error": "That bid is no longer available."}), 409
+
+    intent_id = None
+    if stripe_ready():
+        owner = conn.execute("SELECT * FROM owners WHERE id = ?", (g.owner_id,)).fetchone()
+        if not owner["stripe_customer_id"] or not owner["stripe_payment_method_id"]:
+            return jsonify({"error": "Add a payment method first — see Payment method in your Cleaning tab."}), 400
+        try:
+            intent = _stripe.PaymentIntent.create(
+                amount=bid["amount_cents"],
+                currency="usd",
+                customer=owner["stripe_customer_id"],
+                payment_method=owner["stripe_payment_method_id"],
+                capture_method="manual",
+                confirm=True,
+                off_session=True,
+                description=f"Cabin cleaning request #{req['id']} on {req['clean_date']}",
+            )
+            intent_id = intent.id
+        except Exception as e:
+            return jsonify({"error": f"Couldn't authorize your card: {e}"}), 402
+
+    commission = round(bid["amount_cents"] * CLEAN_COMMISSION_PCT / 100)
+    payout = bid["amount_cents"] - commission
+    conn.execute(
+        "UPDATE cleaning_bids SET status = 'accepted', commission_cents = ?, payout_cents = ?, "
+        "stripe_payment_intent_id = ? WHERE id = ?",
+        (commission, payout, intent_id, bid_id),
+    )
+    conn.execute(
+        "UPDATE cleaning_bids SET status = 'declined' WHERE request_id = ? AND id != ? AND status = 'pending'",
+        (req["id"], bid_id),
+    )
+    conn.execute(
+        "UPDATE cleaning_requests SET status = 'assigned', accepted_bid_id = ?, updated_at = datetime('now') "
+        "WHERE id = ?",
+        (bid_id, req["id"]),
+    )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cleaning/bids/<int:bid_id>/confirm", methods=["POST"])
+@owner_required
+def api_cleaning_bids_confirm(bid_id):
+    """The owner confirming the clean is really done is what actually moves
+    the money: it captures the card hold from accept-time and sends the
+    cleaner's 85% share to their connected Stripe account."""
+    conn = get_db()
+    bid = conn.execute("SELECT * FROM cleaning_bids WHERE id = ?", (bid_id,)).fetchone()
+    if not bid:
+        return jsonify({"error": "Not found."}), 404
+    req = conn.execute(
+        "SELECT * FROM cleaning_requests WHERE id = ? AND owner_id = ?", (bid["request_id"], g.owner_id)
+    ).fetchone()
+    if not req:
+        return jsonify({"error": "Not found."}), 404
+    if not bid["cleaner_marked_done_at"]:
+        return jsonify({"error": "The cleaner hasn't marked this done yet."}), 409
+    if bid["owner_confirmed_at"]:
+        return jsonify({"error": "Already confirmed."}), 409
+
+    transfer_id = None
+    if stripe_ready() and bid["stripe_payment_intent_id"]:
+        try:
+            _stripe.PaymentIntent.capture(bid["stripe_payment_intent_id"])
+            cleaner = conn.execute("SELECT * FROM cleaners WHERE id = ?", (bid["cleaner_id"],)).fetchone()
+            if cleaner["stripe_account_id"] and cleaner["stripe_payouts_ready"]:
+                transfer = _stripe.Transfer.create(
+                    amount=bid["payout_cents"],
+                    currency="usd",
+                    destination=cleaner["stripe_account_id"],
+                    description=f"Cabin cleaning request #{req['id']} payout",
+                )
+                transfer_id = transfer.id
+        except Exception as e:
+            return jsonify({"error": f"Payment didn't go through: {e}"}), 402
+
+    conn.execute(
+        "UPDATE cleaning_bids SET owner_confirmed_at = datetime('now'), stripe_transfer_id = ? WHERE id = ?",
+        (transfer_id, bid_id),
+    )
+    conn.execute(
+        "UPDATE cleaning_requests SET status = 'paid', updated_at = datetime('now') WHERE id = ?", (req["id"],)
+    )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cleaning/owner/payment-setup", methods=["POST"])
+@owner_required
+def api_cleaning_owner_payment_setup():
+    """Starts adding a card on file: creates a Stripe Customer for this
+    owner if they don't have one yet, and returns a SetupIntent client
+    secret for the card form on the front end to confirm against."""
+    if not stripe_ready():
+        return jsonify({"error": "Payments aren't set up on this site yet."}), 503
+    conn = get_db()
+    owner = conn.execute("SELECT * FROM owners WHERE id = ?", (g.owner_id,)).fetchone()
+    customer_id = owner["stripe_customer_id"]
+    if not customer_id:
+        customer = _stripe.Customer.create(email=owner["email"])
+        customer_id = customer.id
+        conn.execute("UPDATE owners SET stripe_customer_id = ? WHERE id = ?", (customer_id, g.owner_id))
+        conn.commit()
+    intent = _stripe.SetupIntent.create(customer=customer_id, usage="off_session")
+    return jsonify({"clientSecret": intent.client_secret, "publishableKey": STRIPE_PUBLISHABLE_KEY})
+
+
+@app.route("/api/cleaning/owner/payment-method", methods=["POST"])
+@owner_required
+def api_cleaning_owner_payment_method_save():
+    data = request.get_json(force=True) or {}
+    pm_id = (data.get("paymentMethodId") or "").strip()
+    if not pm_id:
+        return jsonify({"error": "Missing payment method."}), 400
+    conn = get_db()
+    conn.execute("UPDATE owners SET stripe_payment_method_id = ? WHERE id = ?", (pm_id, g.owner_id))
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cleaning/owner/payment-status", methods=["GET"])
+@owner_required
+def api_cleaning_owner_payment_status():
+    owner = get_db().execute("SELECT * FROM owners WHERE id = ?", (g.owner_id,)).fetchone()
+    return jsonify({
+        "stripeConfigured": stripe_ready(),
+        "hasCard": bool(owner["stripe_payment_method_id"]),
+        "publishableKey": STRIPE_PUBLISHABLE_KEY,
+    })
+
+
+# ---- cleaner side: browse open jobs on the map, bid, mark done ----
+
+@app.route("/api/cleaning/open", methods=["GET"])
+@cleaner_required
+def api_cleaning_open():
+    """Every open cleaning request, with its pin's map position -- this is
+    what the cleaner's 'jobs' view plots on the same map everyone else
+    uses."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT r.*, p.title AS pin_title, p.x AS pin_x, p.y AS pin_y, p.address AS pin_address "
+        "FROM cleaning_requests r JOIN pins p ON p.id = r.pin_id "
+        "WHERE r.status = 'open' ORDER BY r.clean_date ASC"
+    ).fetchall()
+    my_bids = {
+        b["request_id"]: b
+        for b in conn.execute(
+            "SELECT * FROM cleaning_bids WHERE cleaner_id = ? AND status = 'pending'", (g.cleaner_id,)
+        ).fetchall()
+    }
+    out = []
+    for r in rows:
+        d = cleaning_request_to_dict(conn, r)
+        d["pinTitle"] = r["pin_title"]
+        d["pinX"] = r["pin_x"]
+        d["pinY"] = r["pin_y"]
+        d["pinAddress"] = r["pin_address"]
+        mine = my_bids.get(r["id"])
+        d["myBid"] = cleaning_bid_to_dict(mine) if mine else None
+        out.append(d)
+    return jsonify(out)
+
+
+@app.route("/api/cleaning/my-bids", methods=["GET"])
+@cleaner_required
+def api_cleaning_my_bids():
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT b.*, r.clean_date, r.status AS request_status, p.title AS pin_title "
+        "FROM cleaning_bids b JOIN cleaning_requests r ON r.id = b.request_id "
+        "JOIN pins p ON p.id = r.pin_id WHERE b.cleaner_id = ? AND b.status != 'withdrawn' "
+        "ORDER BY b.created_at DESC",
+        (g.cleaner_id,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = cleaning_bid_to_dict(r)
+        d["cleanDate"] = r["clean_date"]
+        d["requestStatus"] = r["request_status"]
+        d["pinTitle"] = r["pin_title"]
+        out.append(d)
+    return jsonify(out)
+
+
+@app.route("/api/cleaning/bids", methods=["POST"])
+@cleaner_required
+def api_cleaning_bids_create():
+    conn = get_db()
+    data = request.get_json(force=True) or {}
+    req_id = data.get("requestId")
+    req = conn.execute("SELECT * FROM cleaning_requests WHERE id = ?", (req_id,)).fetchone()
+    if not req or req["status"] != "open":
+        return jsonify({"error": "That job isn't open anymore."}), 409
+    try:
+        cents = round(float(data.get("amount")) * 100)
+    except (TypeError, ValueError):
+        cents = 0
+    if cents <= 0:
+        return jsonify({"error": "Enter a bid amount above $0."}), 400
+    message = str(data.get("message") or "")[:300]
+    existing = conn.execute(
+        "SELECT * FROM cleaning_bids WHERE request_id = ? AND cleaner_id = ? AND status = 'pending'",
+        (req_id, g.cleaner_id),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE cleaning_bids SET amount_cents = ?, message = ? WHERE id = ?", (cents, message, existing["id"])
+        )
+        bid_id = existing["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO cleaning_bids (request_id, cleaner_id, amount_cents, message) VALUES (?, ?, ?, ?)",
+            (req_id, g.cleaner_id, cents, message),
+        )
+        bid_id = cur.lastrowid
+    conn.commit()
+    return jsonify({"ok": True, "id": bid_id})
+
+
+@app.route("/api/cleaning/bids/<int:bid_id>/withdraw", methods=["POST"])
+@cleaner_required
+def api_cleaning_bids_withdraw(bid_id):
+    conn = get_db()
+    bid = conn.execute(
+        "SELECT * FROM cleaning_bids WHERE id = ? AND cleaner_id = ?", (bid_id, g.cleaner_id)
+    ).fetchone()
+    if not bid:
+        return jsonify({"error": "Not found."}), 404
+    if bid["status"] != "pending":
+        return jsonify({"error": "Only a pending bid can be withdrawn."}), 409
+    conn.execute("UPDATE cleaning_bids SET status = 'withdrawn' WHERE id = ?", (bid_id,))
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cleaning/bids/<int:bid_id>/mark-done", methods=["POST"])
+@cleaner_required
+def api_cleaning_bids_mark_done(bid_id):
+    conn = get_db()
+    bid = conn.execute(
+        "SELECT * FROM cleaning_bids WHERE id = ? AND cleaner_id = ?", (bid_id, g.cleaner_id)
+    ).fetchone()
+    if not bid or bid["status"] != "accepted":
+        return jsonify({"error": "Not found."}), 404
+    conn.execute("UPDATE cleaning_bids SET cleaner_marked_done_at = datetime('now') WHERE id = ?", (bid_id,))
+    conn.execute(
+        "UPDATE cleaning_requests SET status = 'done', updated_at = datetime('now') WHERE id = ?",
+        (bid["request_id"],),
+    )
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/cleaning/cleaner/payout-setup", methods=["POST"])
+@cleaner_required
+def api_cleaning_cleaner_payout_setup():
+    """Creates (if needed) a Stripe Connect Express account for this cleaner
+    and returns a Stripe-hosted onboarding link -- the front end just sends
+    the browser there. Stripe handles identity verification and bank
+    details itself; this app never sees or stores them."""
+    if not stripe_ready():
+        return jsonify({"error": "Payments aren't set up on this site yet."}), 503
+    conn = get_db()
+    cleaner = g.cleaner
+    account_id = cleaner["stripe_account_id"]
+    if not account_id:
+        account = _stripe.Account.create(
+            type="express", email=cleaner["email"], capabilities={"transfers": {"requested": True}}
+        )
+        account_id = account.id
+        conn.execute("UPDATE cleaners SET stripe_account_id = ? WHERE id = ?", (account_id, g.cleaner_id))
+        conn.commit()
+    return_url = request.host_url.rstrip("/") + "/clean"
+    link = _stripe.AccountLink.create(
+        account=account_id, refresh_url=return_url, return_url=return_url, type="account_onboarding"
+    )
+    return jsonify({"url": link.url})
+
+
+@app.route("/api/cleaning/cleaner/payout-status", methods=["GET"])
+@cleaner_required
+def api_cleaning_cleaner_payout_status():
+    conn = get_db()
+    cleaner = g.cleaner
+    ready = bool(cleaner["stripe_payouts_ready"])
+    if stripe_ready() and cleaner["stripe_account_id"] and not ready:
+        try:
+            account = _stripe.Account.retrieve(cleaner["stripe_account_id"])
+            ready = bool(account.get("payouts_enabled"))
+            if ready:
+                conn.execute("UPDATE cleaners SET stripe_payouts_ready = 1 WHERE id = ?", (g.cleaner_id,))
+                conn.commit()
+        except Exception:
+            pass
+    return jsonify({
+        "stripeConfigured": stripe_ready(),
+        "payoutsReady": ready,
+        "hasAccount": bool(cleaner["stripe_account_id"]),
+    })
+
+
+# ---- admin: approve/reject cleaner accounts ----
+
+@app.route("/api/admin/cleaners", methods=["GET"])
+@admin_required
+def api_admin_cleaners_list():
+    rows = get_db().execute("SELECT * FROM cleaners ORDER BY created_at DESC").fetchall()
+    return jsonify([
+        {
+            "id": r["id"], "name": r["name"], "email": r["email"], "phone": r["phone"],
+            "status": r["status"], "payoutsReady": bool(r["stripe_payouts_ready"]),
+            "createdAt": _to_ms(r["created_at"]),
+        }
+        for r in rows
+    ])
+
+
+@app.route("/api/admin/cleaners/<int:cleaner_id>/status", methods=["POST"])
+@admin_required
+def api_admin_cleaners_set_status(cleaner_id):
+    data = request.get_json(force=True) or {}
+    status = data.get("status")
+    if status not in ("pending", "approved", "rejected"):
+        return jsonify({"error": "Bad status."}), 400
+    conn = get_db()
+    conn.execute("UPDATE cleaners SET status = ? WHERE id = ?", (status, cleaner_id))
+    conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/cleaners/<int:cleaner_id>", methods=["DELETE"])
+@admin_required
+def api_admin_cleaners_delete(cleaner_id):
+    conn = get_db()
+    conn.execute("DELETE FROM cleaners WHERE id = ?", (cleaner_id,))
     conn.commit()
     return jsonify({"ok": True})
 
