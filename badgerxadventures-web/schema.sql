@@ -216,3 +216,18 @@ CREATE TABLE IF NOT EXISTS site_visits (
   PRIMARY KEY (day, ip_hash)
 );
 CREATE INDEX IF NOT EXISTS idx_site_visits_day ON site_visits(day);
+
+-- A rolling log of who's actually loading the map page -- the real IP
+-- address, unlike site_visits above (which only ever keeps a hashed one,
+-- for the counter) -- so the admin can see who's on the site right now and
+-- ban anyone unwanted. Every insert also deletes anything older than 24
+-- hours (see record_visitor_log in app.py), so nothing here is ever kept
+-- longer than that.
+CREATE TABLE IF NOT EXISTS visitor_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  ip          TEXT NOT NULL,
+  path        TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_visitor_log_created ON visitor_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_visitor_log_ip ON visitor_log(ip);
