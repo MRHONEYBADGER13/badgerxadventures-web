@@ -231,3 +231,76 @@ CREATE TABLE IF NOT EXISTS visitor_log (
 );
 CREATE INDEX IF NOT EXISTS idx_visitor_log_created ON visitor_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_visitor_log_ip ON visitor_log(ip);
+
+-- Cabin-cleaning marketplace -------------------------------------------------
+
+-- People who sign up on the separate /clean page to bid on cleaning jobs --
+-- no invite code needed, unlike owners above. A brand new account starts
+-- 'pending' and can't see or bid on any job until an admin approves it from
+-- the admin panel (they'll be going into people's private cabins, so this
+-- is a basic screening step). stripe_account_id is their Stripe Connect
+-- Express account, created the first time they start payout setup;
+-- stripe_payouts_ready flips on once Stripe confirms that account can
+-- actually receive a transfer.
+CREATE TABLE IF NOT EXISTS cleaners (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  name                  TEXT NOT NULL,
+  email                 TEXT UNIQUE NOT NULL,
+  phone                 TEXT NOT NULL DEFAULT '',
+  password_hash         TEXT NOT NULL,
+  status                TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
+  stripe_account_id     TEXT,
+  stripe_payouts_ready  INTEGER NOT NULL DEFAULT 0,
+  created_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cleaners_status ON cleaners(status);
+
+-- A stay owner's request to have their cabin cleaned on a given date, with
+-- an asking price they set. Every approved cleaner sees every 'open'
+-- request as a pin on the map and can counter-bid; the owner then accepts
+-- one bid (moving this to 'assigned'), the cleaner marks it 'done', and it
+-- becomes 'paid' once the owner confirms and the money actually moves (see
+-- cleaning_bids below) -- or the owner can cancel an 'open' request outright.
+CREATE TABLE IF NOT EXISTS cleaning_requests (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  pin_id              INTEGER NOT NULL REFERENCES pins(id) ON DELETE CASCADE,
+  owner_id            INTEGER NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
+  clean_date          TEXT NOT NULL,   -- YYYY-MM-DD
+  asking_price_cents  INTEGER NOT NULL,
+  notes               TEXT NOT NULL DEFAULT '',
+  status              TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','assigned','done','paid','cancelled')),
+  accepted_bid_id     INTEGER,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cleaning_requests_status ON cleaning_requests(status);
+CREATE INDEX IF NOT EXISTS idx_cleaning_requests_owner ON cleaning_requests(owner_id);
+CREATE INDEX IF NOT EXISTS idx_cleaning_requests_pin ON cleaning_requests(pin_id);
+
+-- A cleaner's bid on an open cleaning_requests row -- their own price,
+-- which can match or counter the owner's asking price, plus an optional
+-- note. commission_cents/payout_cents (platform's 15% cut and the
+-- cleaner's 85%) are computed once, at accept time, and frozen here so a
+-- later commission-rate change never touches a job already in progress.
+-- The stripe_* columns track the actual money: a PaymentIntent is created
+-- and authorized -- never captured -- the instant the owner accepts a bid;
+-- it's only captured, and a Connect transfer sent to the cleaner, once the
+-- cleaner has marked the job done AND the owner has confirmed it. Nothing
+-- is ever charged before both of those happen.
+CREATE TABLE IF NOT EXISTS cleaning_bids (
+  id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id                INTEGER NOT NULL REFERENCES cleaning_requests(id) ON DELETE CASCADE,
+  cleaner_id                INTEGER NOT NULL REFERENCES cleaners(id) ON DELETE CASCADE,
+  amount_cents              INTEGER NOT NULL,
+  message                   TEXT NOT NULL DEFAULT '',
+  status                    TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','declined','withdrawn')),
+  commission_cents          INTEGER,
+  payout_cents              INTEGER,
+  cleaner_marked_done_at    TEXT,
+  owner_confirmed_at        TEXT,
+  stripe_payment_intent_id  TEXT,
+  stripe_transfer_id        TEXT,
+  created_at                TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_cleaning_bids_request ON cleaning_bids(request_id);
+CREATE INDEX IF NOT EXISTS idx_cleaning_bids_cleaner ON cleaning_bids(cleaner_id);
