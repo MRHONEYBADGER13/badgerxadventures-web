@@ -64,6 +64,18 @@
     <div id="editArea" style="margin-top:16px"></div>
   </div>
   <div class="admin-panel">
+    <h3>Cleaners</h3>
+    <p style="font-size:13px;color:var(--muted);margin-top:0">
+      Anyone who signs up at /clean to bid on cabin cleaning jobs. A new account starts pending and
+      can't see or bid on anything until you approve it here -- they'll be going into people's
+      private cabins.
+    </p>
+    <table class="admin-table" id="cleanersTable">
+      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Payouts</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="admin-panel">
     <h3>Ad banner</h3>
     <p style="font-size:13px;color:var(--muted);margin-top:0">
       These images scroll across the top of the app, above the map. Add as many as you like —
@@ -529,8 +541,41 @@ document.addEventListener('click', async (e) => {
     const id = btn.dataset.id;
     await fetch('/api/admin/chat/messages/' + id, {method:'DELETE'});
     loadChatMessages();
+  } else if (act === 'approvecleaner') {
+    const id = btn.dataset.id;
+    await fetch('/api/admin/cleaners/' + id + '/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:'approved'})});
+    loadCleaners();
+  } else if (act === 'rejectcleaner') {
+    const id = btn.dataset.id;
+    if (!confirm('Reject this cleaner application?')) return;
+    await fetch('/api/admin/cleaners/' + id + '/status', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:'rejected'})});
+    loadCleaners();
+  } else if (act === 'delcleaner') {
+    const id = btn.dataset.id;
+    if (!confirm('Permanently delete this cleaner account?')) return;
+    await fetch('/api/admin/cleaners/' + id, {method:'DELETE'});
+    loadCleaners();
   }
 });
+
+async function loadCleaners(){
+  const rows = await fetch('/api/admin/cleaners').then(r => r.json());
+  const statusLabel = {pending: 'Pending', approved: 'Approved', rejected: 'Rejected'};
+  document.getElementById('cleanersTable').querySelector('tbody').innerHTML = rows.map(c => `
+    <tr>
+      <td>${escHtml(c.name)}</td>
+      <td>${escHtml(c.email)}</td>
+      <td>${escHtml(c.phone || '')}</td>
+      <td><span class="pill">${statusLabel[c.status] || c.status}</span></td>
+      <td>${c.payoutsReady ? 'Ready' : '—'}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        ${c.status !== 'approved' ? `<button class="btn-sm" data-act="approvecleaner" data-id="${c.id}">Approve</button>` : ''}
+        ${c.status !== 'rejected' ? `<button class="btn-sm danger" data-act="rejectcleaner" data-id="${c.id}">Reject</button>` : ''}
+        <button class="btn-sm danger" data-act="delcleaner" data-id="${c.id}">Delete</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" style="color:var(--muted)">No cleaner sign-ups yet.</td></tr>';
+}
 
 async function loadChatMessages(){
   const rows = await fetch('/api/admin/chat/messages').then(r => r.json());
@@ -548,8 +593,8 @@ async function loadChatMessages(){
 
 (async () => {
   if (await requireAdmin()) {
-    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits(); loadBannedIps(); loadVisitorLog();
-    setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisitorLog(); }, 10000);
+    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits(); loadBannedIps(); loadVisitorLog(); loadCleaners();
+    setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisitorLog(); loadCleaners(); }, 10000);
   }
 })();
 </script>
