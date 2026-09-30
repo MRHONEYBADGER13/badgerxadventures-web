@@ -11,7 +11,9 @@ info and photos -- but never its location, which is set once, server-side,
 and can only ever be moved again by an admin. Only the admin account can
 edit or delete any pin, and only the admin can generate invite codes.
 """
+import csv
 import hashlib
+import io
 import json
 import os
 import re
@@ -22,7 +24,7 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from functools import wraps
 
-from flask import Flask, request, jsonify, render_template, g, send_from_directory, redirect
+from flask import Flask, request, jsonify, render_template, g, send_from_directory, redirect, Response
 from PIL import Image, ImageOps
 
 import db
@@ -121,6 +123,26 @@ def send_email(to_addr, subject, text_body):
     with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context, timeout=15) as server:
         server.login(SMTP_USER, SMTP_PASS)
         server.send_message(msg)
+
+
+def notify_admins(subject, text_body):
+    """Best-effort email to every admin account on file -- for things the
+    admin would want to know about right away (a new pin signup, a new
+    cleaner application). Never raises: a notification failing to send must
+    never block the real action it's about, so every failure here is just
+    logged and swallowed."""
+    try:
+        admin_emails = [r["email"] for r in get_db().execute("SELECT email FROM admins").fetchall()]
+    except Exception as e:
+        print(f"[notify_admins] couldn't load admin emails: {e!r}", flush=True)
+        return
+    for addr in admin_emails:
+        try:
+            send_email(addr, subject, text_body)
+        except Exception as e:
+            print(f"[notify_admins] failed to email {addr}: {e!r}", flush=True)
+
+
 _RENDER_DISK_DIR = "/opt/render/project/src/instance"
 _DATA_DIR = _RENDER_DISK_DIR if os.path.isdir(_RENDER_DISK_DIR) else os.path.join(os.path.dirname(__file__), "instance")
 UPLOAD_DIR = os.path.join(_DATA_DIR, "uploads")
@@ -262,6 +284,26 @@ def admin_required(fn):
     return wrapper
 
 
+def log_admin_action(action, detail=""):
+    """Best-effort write to the admin activity log (who did what, and when)
+    -- called from the admin endpoints below that make a notable change.
+    Never raises: a logging failure must never block the real action."""
+    try:
+        admin_id = getattr(g, "admin_id", None)
+        admin_email = None
+        conn = get_db()
+        if admin_id:
+            row = conn.execute("SELECT email FROM admins WHERE id = ?", (admin_id,)).fetchone()
+            admin_email = row["email"] if row else None
+        conn.execute(
+            "INSERT INTO admin_activity_log (admin_id, admin_email, action, detail) VALUES (?, ?, ?, ?)",
+            (admin_id, admin_email, action, detail),
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"[log_admin_action] failed to log {action!r}: {e!r}", flush=True)
+
+
 def current_cleaner_id():
     token = request.cookies.get("cleaner_session")
     if not token:
@@ -338,6 +380,20 @@ def _to_ms(iso_str):
         return int(dt.timestamp() * 1000)
     except ValueError:
         return None
+
+
+def _csv_response(filename, header, rows):
+    """A downloadable CSV for one of the admin export buttons -- rows is an
+    iterable of sequences matching header's column order."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(header)
+    writer.writerows(rows)
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 def row_to_client_doc(row):
@@ -597,6 +653,13 @@ def api_redeem():
         (row["id"],),
     )
     conn.commit()
+
+    notify_admins(
+        "New pin signup on BADGERxADVENTURES",
+        f"{email} just redeemed invite code {code} ({row['pin_type']}"
+        + (f", \"{row['label']}\"" if row["label"] else "")
+        + ").\n\nThey can now place their pin on the map.",
+    )
 
     resp = jsonify({"ok": True, "pin_type": row["pin_type"]})
     token = auth.make_owner_token(owner_id)
@@ -906,6 +969,112 @@ def api_admin_visitor_log():
     ])
 
 
+@app.route("/api/admin/stats", methods=["GET"])
+@admin_required
+def api_admin_stats():
+    """A quick at-a-glance overview for the top of the admin panel -- things
+    worth checking without opening each panel below one by one."""
+    conn = get_db()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    messages_today = conn.execute(
+        "SELECT COUNT(*) AS n FROM chat_messages WHERE created_at >= ?", (today,)
+    ).fetchone()["n"]
+    pending_cleaners = conn.execute(
+        "SELECT COUNT(*) AS n FROM cleaners WHERE status = 'pending'"
+    ).fetchone()["n"]
+    unclaimed_codes = conn.execute(
+        "SELECT COUNT(*) AS n FROM invite_codes WHERE status = 'unused'"
+    ).fetchone()["n"]
+    banned_ip_count = conn.execute("SELECT COUNT(*) AS n FROM banned_ips").fetchone()["n"]
+    open_cleaning = conn.execute(
+        "SELECT COUNT(*) AS n FROM cleaning_requests WHERE status = 'open'"
+    ).fetchone()["n"]
+    pins_by_type = {
+        r["pin_type"]: r["n"]
+        for r in conn.execute("SELECT pin_type, COUNT(*) AS n FROM pins GROUP BY pin_type").fetchall()
+    }
+    return jsonify({
+        "messagesToday": messages_today,
+        "pendingCleaners": pending_cleaners,
+        "unclaimedCodes": unclaimed_codes,
+        "bannedIps": banned_ip_count,
+        "openCleaningRequests": open_cleaning,
+        "pinsByType": pins_by_type,
+    })
+
+
+@app.route("/api/admin/activity-log", methods=["GET"])
+@admin_required
+def api_admin_activity_log():
+    rows = get_db().execute(
+        "SELECT admin_email, action, detail, created_at FROM admin_activity_log "
+        "ORDER BY id DESC LIMIT 200"
+    ).fetchall()
+    return jsonify([
+        {
+            "adminEmail": r["admin_email"],
+            "action": r["action"],
+            "detail": r["detail"],
+            "at": _to_ms(r["created_at"]),
+        }
+        for r in rows
+    ])
+
+
+@app.route("/api/admin/export/pins.csv", methods=["GET"])
+@admin_required
+def api_admin_export_pins_csv():
+    rows = get_db().execute(
+        "SELECT p.id, p.title, p.pin_type, p.sub_type, o.email AS owner_email, "
+        "p.phone, p.address, p.price, p.created_at, p.updated_at "
+        "FROM pins p LEFT JOIN owners o ON o.id = p.owner_id ORDER BY p.id"
+    ).fetchall()
+    return _csv_response(
+        "pins.csv",
+        ["id", "title", "pin_type", "sub_type", "owner_email", "phone", "address", "price", "created_at", "updated_at"],
+        [tuple(r) for r in rows],
+    )
+
+
+@app.route("/api/admin/export/owners.csv", methods=["GET"])
+@admin_required
+def api_admin_export_owners_csv():
+    rows = get_db().execute(
+        "SELECT o.id, o.email, o.suspended, ic.pin_type, ic.label, p.title AS pin_title, o.created_at "
+        "FROM owners o "
+        "JOIN invite_codes ic ON ic.id = o.code_id "
+        "LEFT JOIN pins p ON p.owner_id = o.id "
+        "ORDER BY o.id"
+    ).fetchall()
+    return _csv_response(
+        "owners.csv",
+        ["id", "email", "paused", "pin_type", "code_label", "pin_title", "created_at"],
+        [(r["id"], r["email"], "yes" if r["suspended"] else "no", r["pin_type"], r["label"], r["pin_title"], r["created_at"]) for r in rows],
+    )
+
+
+@app.route("/api/admin/export/visitor-log.csv", methods=["GET"])
+@admin_required
+def api_admin_export_visitor_log_csv():
+    conn = get_db()
+    conn.execute("DELETE FROM visitor_log WHERE created_at < datetime('now', '-1 day')")
+    conn.commit()
+    rows = conn.execute(
+        "SELECT ip, COUNT(*) AS hits, MIN(created_at) AS first_at, MAX(created_at) AS last_at "
+        "FROM visitor_log GROUP BY ip ORDER BY last_at DESC"
+    ).fetchall()
+    banned = {r["ip"] for r in conn.execute("SELECT ip FROM banned_ips").fetchall()}
+    locations = geoip.locate_many([r["ip"] for r in rows])
+    return _csv_response(
+        "visitor-log.csv",
+        ["ip", "location", "hits", "first_seen", "last_seen", "banned"],
+        [
+            (r["ip"], locations.get(r["ip"]) or "", r["hits"], r["first_at"], r["last_at"], "yes" if r["ip"] in banned else "no")
+            for r in rows
+        ],
+    )
+
+
 @app.route("/api/admin/codes", methods=["GET"])
 @admin_required
 def api_admin_codes_list():
@@ -924,10 +1093,12 @@ def api_admin_codes_create():
     if pin_type not in ("business", "stay", "custom"):
         return jsonify({"error": "pin_type must be business, stay, or custom."}), 400
     code = auth.gen_invite_code()
+    label = data.get("label", "")
     conn = get_db()
     conn.execute("INSERT INTO invite_codes (code, pin_type, label) VALUES (?, ?, ?)",
-                 (code, pin_type, data.get("label", "")))
+                 (code, pin_type, label))
     conn.commit()
+    log_admin_action("generate_code", f"{code} ({pin_type})" + (f' — "{label}"' if label else ""))
     return jsonify({"ok": True, "code": code})
 
 
@@ -942,6 +1113,7 @@ def api_admin_codes_delete(code_id):
         return jsonify({"error": "Can't delete a code that's already been used — delete the owner instead."}), 409
     conn.execute("DELETE FROM invite_codes WHERE id = ?", (code_id,))
     conn.commit()
+    log_admin_action("delete_code", f"{row['code']} ({row['pin_type']})")
     return jsonify({"ok": True})
 
 
@@ -1035,8 +1207,11 @@ def api_admin_pins_update(pin_id):
 @admin_required
 def api_admin_pins_delete(pin_id):
     conn = get_db()
+    pin = conn.execute("SELECT title, pin_type FROM pins WHERE id = ?", (pin_id,)).fetchone()
     conn.execute("DELETE FROM pins WHERE id = ?", (pin_id,))
     conn.commit()
+    if pin:
+        log_admin_action("delete_pin", f"\"{pin['title']}\" ({pin['pin_type']})")
     return jsonify({"ok": True})
 
 
@@ -1097,6 +1272,13 @@ def api_admin_owners_update(owner_id):
     set_clause = ", ".join(f"{k} = ?" for k in fields)
     conn.execute(f"UPDATE owners SET {set_clause} WHERE id = ?", (*fields.values(), owner_id))
     conn.commit()
+    if "suspended" in fields:
+        log_admin_action(
+            "unpause_owner" if not fields["suspended"] else "pause_owner",
+            fields.get("email", owner["email"]),
+        )
+    if "email" in fields:
+        log_admin_action("edit_owner_email", f"{owner['email']} -> {fields['email']}")
     return jsonify({"ok": True})
 
 
@@ -1105,8 +1287,11 @@ def api_admin_owners_update(owner_id):
 def api_admin_owners_delete(owner_id):
     """Fully revoke an owner: deletes their account and pin (FK cascade)."""
     conn = get_db()
+    owner = conn.execute("SELECT email FROM owners WHERE id = ?", (owner_id,)).fetchone()
     conn.execute("DELETE FROM owners WHERE id = ?", (owner_id,))
     conn.commit()
+    if owner:
+        log_admin_action("delete_owner", f"{owner['email']} (account and pin)")
     return jsonify({"ok": True})
 
 
@@ -1860,6 +2045,7 @@ def api_admin_chat_kick():
     if target["session_id"]:
         conn.execute("DELETE FROM chat_names WHERE session_id = ?", (target["session_id"],))
     conn.commit()
+    log_admin_action("kick_chat_name", display_name)
     return jsonify({"ok": True, "minutes": CHAT_KICK_MINUTES})
 
 @app.route("/api/admin/chat/ban", methods=["POST"])
@@ -1882,6 +2068,7 @@ def api_admin_chat_ban():
     if target["session_id"]:
         conn.execute("DELETE FROM chat_names WHERE session_id = ?", (target["session_id"],))
     conn.commit()
+    log_admin_action("ban_chat_name", display_name)
     return jsonify({"ok": True})
 
 @app.route("/api/admin/chat/banned")
@@ -1945,6 +2132,7 @@ def api_admin_chat_ban_ip():
         (ip, display_name),
     )
     conn.commit()
+    log_admin_action("ban_ip", f"{ip} (from chat name \"{display_name}\")")
     return jsonify({"ok": True, "ip": ip})
 
 @app.route("/api/admin/banned-ips", methods=["GET"])
@@ -1974,6 +2162,7 @@ def api_admin_banned_ips_add():
         (ip, label),
     )
     conn.commit()
+    log_admin_action("ban_ip", ip + (f" ({label})" if label else ""))
     return jsonify({"ok": True})
 
 @app.route("/api/admin/banned-ips/<ip>", methods=["DELETE"])
@@ -1982,6 +2171,7 @@ def api_admin_banned_ips_delete(ip):
     conn = get_db()
     conn.execute("DELETE FROM banned_ips WHERE ip = ?", (ip,))
     conn.commit()
+    log_admin_action("unban_ip", ip)
     return jsonify({"ok": True})
 
 @app.route("/api/admin/chat/warn", methods=["POST"])
@@ -2071,6 +2261,13 @@ def api_cleaner_signup():
         (name, email, phone, pw_hash),
     )
     conn.commit()
+
+    notify_admins(
+        "New cleaner signup on BADGERxADVENTURES",
+        f"{name} ({email}) just signed up to bid on cabin cleaning jobs. "
+        "They can't see or bid on anything until you approve them in the admin panel.",
+    )
+
     resp = jsonify({"ok": True, "status": "pending"})
     token = auth.make_cleaner_token(cur.lastrowid)
     resp.set_cookie("cleaner_session", token, httponly=True, samesite="Lax", max_age=60 * 60 * 24 * 30)
@@ -2526,8 +2723,11 @@ def api_admin_cleaners_set_status(cleaner_id):
     if status not in ("pending", "approved", "rejected"):
         return jsonify({"error": "Bad status."}), 400
     conn = get_db()
+    cleaner = conn.execute("SELECT email FROM cleaners WHERE id = ?", (cleaner_id,)).fetchone()
     conn.execute("UPDATE cleaners SET status = ? WHERE id = ?", (status, cleaner_id))
     conn.commit()
+    if cleaner:
+        log_admin_action("set_cleaner_status", f"{cleaner['email']} -> {status}")
     return jsonify({"ok": True})
 
 
@@ -2535,8 +2735,11 @@ def api_admin_cleaners_set_status(cleaner_id):
 @admin_required
 def api_admin_cleaners_delete(cleaner_id):
     conn = get_db()
+    cleaner = conn.execute("SELECT email FROM cleaners WHERE id = ?", (cleaner_id,)).fetchone()
     conn.execute("DELETE FROM cleaners WHERE id = ?", (cleaner_id,))
     conn.commit()
+    if cleaner:
+        log_admin_action("delete_cleaner", cleaner["email"])
     return jsonify({"ok": True})
 
 
