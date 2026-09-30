@@ -304,3 +304,18 @@ CREATE TABLE IF NOT EXISTS cleaning_bids (
 );
 CREATE INDEX IF NOT EXISTS idx_cleaning_bids_request ON cleaning_bids(request_id);
 CREATE INDEX IF NOT EXISTS idx_cleaning_bids_cleaner ON cleaning_bids(cleaner_id);
+
+-- A record of notable admin actions -- who paused an account, deleted a
+-- pin, generated a code, banned an IP, and so on -- purely for the admin's
+-- own accountability/audit trail. Never shown to anyone but the admin, and
+-- writing to it is always best-effort: a logging failure must never block
+-- the real action it's describing (see log_admin_action in app.py).
+CREATE TABLE IF NOT EXISTS admin_activity_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id    INTEGER,
+  admin_email TEXT,
+  action      TEXT NOT NULL,
+  detail      TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_admin_activity_created ON admin_activity_log(created_at);
