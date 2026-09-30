@@ -642,8 +642,13 @@ def api_forgot_password():
             )
             try:
                 send_email(owner["email"], "Reset your BADGERxADVENTURES password", body)
-            except Exception:
-                pass
+            except Exception as e:
+                # Still answer the client with a plain {"ok": true} either way
+                # (see the docstring above) -- but log the real reason here so
+                # it shows up in Render's logs instead of vanishing silently.
+                print(f"[forgot-password] send_email failed for {owner['email']}: {e}", flush=True)
+        else:
+            print(f"[forgot-password] no owner account for email {email!r}", flush=True)
     return jsonify({"ok": True})
 
 
