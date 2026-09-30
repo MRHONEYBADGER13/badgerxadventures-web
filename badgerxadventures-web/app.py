@@ -241,6 +241,11 @@ def owner_required(fn):
         oid = current_owner_id()
         if not oid:
             return jsonify({"error": "not logged in"}), 401
+        owner = get_db().execute("SELECT suspended FROM owners WHERE id = ?", (oid,)).fetchone()
+        if not owner:
+            return jsonify({"error": "not logged in"}), 401
+        if owner["suspended"]:
+            return jsonify({"error": "This account has been paused. Contact the site admin if you think this is a mistake."}), 403
         g.owner_id = oid
         return fn(*a, **kw)
     return wrapper
@@ -380,7 +385,14 @@ def row_to_client_doc(row):
 
 
 def fetch_docs():
-    rows = get_db().execute("SELECT * FROM pins ORDER BY id").fetchall()
+    # A paused owner's pin skips the public map entirely (but stays fully
+    # visible in the admin's own pins list, so un-pausing is a one-click
+    # undo) -- pins with no owner (owner_id IS NULL, e.g. admin-placed
+    # landmarks) are never affected by this.
+    rows = get_db().execute(
+        "SELECT p.* FROM pins p LEFT JOIN owners o ON o.id = p.owner_id "
+        "WHERE COALESCE(o.suspended, 0) = 0 ORDER BY p.id"
+    ).fetchall()
     pins, stays = [], []
     for r in rows:
         kind, doc = row_to_client_doc(r)
@@ -601,6 +613,8 @@ def api_login():
     row = conn.execute("SELECT * FROM owners WHERE email = ?", (email,)).fetchone()
     if not row or not auth.verify_password(password, row["password_hash"]):
         return jsonify({"error": "Wrong email or password."}), 401
+    if row["suspended"]:
+        return jsonify({"error": "This account has been paused. Contact the site admin if you think this is a mistake."}), 403
     resp = jsonify({"ok": True})
     token = auth.make_owner_token(row["id"])
     resp.set_cookie("owner_session", token, httponly=True, samesite="Lax", max_age=60 * 60 * 24 * 30)
@@ -944,7 +958,8 @@ def admin_pin_dict(row):
 @admin_required
 def api_admin_pins_list():
     rows = get_db().execute(
-        "SELECT p.*, o.email AS owner_email FROM pins p LEFT JOIN owners o ON o.id = p.owner_id "
+        "SELECT p.*, o.email AS owner_email, o.suspended AS owner_suspended "
+        "FROM pins p LEFT JOIN owners o ON o.id = p.owner_id "
         "ORDER BY p.id"
     ).fetchall()
     return jsonify([admin_pin_dict(r) for r in rows])
@@ -1050,6 +1065,39 @@ def api_admin_pin_remove_photo(pin_id):
     if err:
         return err
     return jsonify({"ok": True, "photos": photos})
+
+
+@app.route("/api/admin/owners/<int:owner_id>", methods=["PUT"])
+@admin_required
+def api_admin_owners_update(owner_id):
+    """Partial-update an owner: change their email and/or pause (suspend) or
+    unpause their account. Pausing blocks login/use immediately (see
+    owner_required and /api/login) and hides their pin from the public map
+    (see fetch_docs) -- unpausing reverses both right away."""
+    conn = get_db()
+    owner = conn.execute("SELECT * FROM owners WHERE id = ?", (owner_id,)).fetchone()
+    if not owner:
+        return jsonify({"error": "That owner no longer exists."}), 404
+    data = request.get_json(force=True) or {}
+    fields = {}
+    if "email" in data:
+        email = (data.get("email") or "").strip().lower()
+        if not email or "@" not in email:
+            return jsonify({"error": "Enter a valid email address."}), 400
+        existing = conn.execute(
+            "SELECT id FROM owners WHERE email = ? AND id != ?", (email, owner_id)
+        ).fetchone()
+        if existing:
+            return jsonify({"error": "That email is already in use by another account."}), 409
+        fields["email"] = email
+    if "suspended" in data:
+        fields["suspended"] = 1 if data.get("suspended") else 0
+    if not fields:
+        return jsonify({"error": "Nothing to update."}), 400
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE owners SET {set_clause} WHERE id = ?", (*fields.values(), owner_id))
+    conn.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/owners/<int:owner_id>", methods=["DELETE"])
