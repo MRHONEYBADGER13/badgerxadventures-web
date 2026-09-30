@@ -501,6 +501,11 @@ def reset_password_page():
     return render_template("reset_password.html")
 
 
+@app.route("/forgot-password")
+def forgot_password_page():
+    return render_template("forgot_password.html")
+
+
 @app.route("/dashboard")
 def dashboard_page():
     # The old standalone dashboard is retired -- everything (placing your
@@ -607,6 +612,39 @@ def api_logout():
     resp = jsonify({"ok": True})
     resp.delete_cookie("owner_session")
     return resp
+
+
+@app.route("/api/forgot-password", methods=["POST"])
+def api_forgot_password():
+    """Self-service "I forgot my password", started from the owner login
+    page itself (as opposed to /api/admin/owners/<id>/send-reset, which an
+    admin triggers on someone's behalf). Always answers the same way
+    whether or not the email matches an account, and never raises even if
+    sending the email fails -- so this endpoint can't be used to find out
+    who has an account here, and a stranger poking at it just gets silence."""
+    data = request.get_json(force=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if email:
+        conn = get_db()
+        owner = conn.execute("SELECT * FROM owners WHERE email = ?", (email,)).fetchone()
+        if owner:
+            token = auth.make_reset_token(owner["id"], owner["password_hash"])
+            reset_url = request.host_url.rstrip("/") + "/reset-password?token=" + token
+            body = (
+                "Hi,\n\n"
+                "Someone (hopefully you) asked to reset the password for your "
+                f"BADGERxADVENTURES account ({owner['email']}).\n\n"
+                f"Set a new password here:\n{reset_url}\n\n"
+                "This link expires in 2 hours and works only once. If you weren't "
+                "expecting this, you can ignore this email -- your password won't "
+                "change unless you click the link and set a new one.\n\n"
+                "-- BADGERxADVENTURES"
+            )
+            try:
+                send_email(owner["email"], "Reset your BADGERxADVENTURES password", body)
+            except Exception:
+                pass
+    return jsonify({"ok": True})
 
 
 @app.route("/api/reset-password", methods=["POST"])
