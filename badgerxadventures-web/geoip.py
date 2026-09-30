@@ -32,7 +32,7 @@ def _fetch(ip):
         f"https://ipwho.is/{ip}",
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=4) as resp:
+    with urllib.request.urlopen(req, timeout=8) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -59,8 +59,12 @@ def locate(ip):
                 label = f"{city}, {country}"
             elif country:
                 label = country
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
-        pass
+            else:
+                print(f"[geoip] lookup for {ip} succeeded but had no usable city/country: {data}", flush=True)
+        else:
+            print(f"[geoip] lookup for {ip} came back unsuccessful: {data.get('message')}", flush=True)
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as e:
+        print(f"[geoip] lookup for {ip} failed: {e!r}", flush=True)
     _cache[ip] = label
     return label or None
 
