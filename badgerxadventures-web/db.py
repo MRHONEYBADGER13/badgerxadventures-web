@@ -66,6 +66,17 @@ def _migrate(conn):
     if "suspended" not in owner_cols:
         conn.execute("ALTER TABLE owners ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0")
 
+    # A cleaner's ID-check photos from signup: a selfie plus both sides of a
+    # photo ID, stored as bare filenames under ID_VERIFY_DIR (never a public
+    # URL -- see app.py). NULL for any cleaner who signed up before this.
+    cleaner_cols = {row["name"] for row in conn.execute("PRAGMA table_info(cleaners)")}
+    if "id_face_path" not in cleaner_cols:
+        conn.execute("ALTER TABLE cleaners ADD COLUMN id_face_path TEXT")
+    if "id_front_path" not in cleaner_cols:
+        conn.execute("ALTER TABLE cleaners ADD COLUMN id_front_path TEXT")
+    if "id_back_path" not in cleaner_cols:
+        conn.execute("ALTER TABLE cleaners ADD COLUMN id_back_path TEXT")
+
 
 def row_to_dict(row):
     return dict(row) if row is not None else None
