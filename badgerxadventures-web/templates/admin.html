@@ -25,15 +25,55 @@
     </div>
   </div>
   <div class="admin-panel" style="grid-column:1 / -1">
+    <h3>Quick stats</h3>
+    <div style="display:flex;gap:32px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:28px;font-weight:700;color:var(--accent)" id="statMessagesToday">—</div>
+        <div style="font-size:12px;color:var(--muted)">chat messages today</div>
+      </div>
+      <div>
+        <div style="font-size:28px;font-weight:700;color:var(--accent)" id="statPendingCleaners">—</div>
+        <div style="font-size:12px;color:var(--muted)">cleaner applications pending</div>
+      </div>
+      <div>
+        <div style="font-size:28px;font-weight:700;color:var(--accent)" id="statUnclaimedCodes">—</div>
+        <div style="font-size:12px;color:var(--muted)">unclaimed invite codes</div>
+      </div>
+      <div>
+        <div style="font-size:28px;font-weight:700;color:var(--accent)" id="statBannedIps">—</div>
+        <div style="font-size:12px;color:var(--muted)">IPs banned</div>
+      </div>
+      <div>
+        <div style="font-size:28px;font-weight:700;color:var(--accent)" id="statOpenCleaning">—</div>
+        <div style="font-size:12px;color:var(--muted)">open cleaning requests</div>
+      </div>
+    </div>
+    <div id="statPinsByType" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
+  </div>
+  <div class="admin-panel" style="grid-column:1 / -1">
     <details id="visitorLogDetails">
       <summary class="panel-summary">Visitors (last 24 hours) <span id="visitorLogCount" style="color:var(--muted);font-weight:400"></span></summary>
       <p style="font-size:13px;color:var(--muted)">
         Everyone who's loaded the map page in the last day, with their IP address and rough
         location. This list clears itself after 24 hours -- ban an IP here to block it from the
         whole site right away (same list as Banned IPs, below, under Lake Chat).
+        <a href="/api/admin/export/visitor-log.csv" style="margin-left:6px">Export CSV</a>
       </p>
       <table class="admin-table" id="visitorLogTable">
         <thead><tr><th>IP</th><th>Visits</th><th>Last seen</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </details>
+  </div>
+  <div class="admin-panel" style="grid-column:1 / -1">
+    <details id="activityLogDetails">
+      <summary class="panel-summary">Activity log <span id="activityLogCount" style="color:var(--muted);font-weight:400"></span></summary>
+      <p style="font-size:13px;color:var(--muted)">
+        A record of notable admin actions -- pauses, deletions, bans, codes generated, and so on --
+        so there's a trail of what happened and when.
+      </p>
+      <table class="admin-table" id="activityLogTable">
+        <thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Detail</th></tr></thead>
         <tbody></tbody>
       </table>
     </details>
@@ -59,6 +99,11 @@
   </div>
   <div class="admin-panel">
     <h3>All pins</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <input id="pinsFilter" oninput="filterPins()" placeholder="Search by title or owner email…" style="padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px;flex:1;min-width:180px">
+      <a class="btn-sm" href="/api/admin/export/pins.csv" style="text-decoration:none;display:inline-block">Export pins CSV</a>
+      <a class="btn-sm" href="/api/admin/export/owners.csv" style="text-decoration:none;display:inline-block">Export owners CSV</a>
+    </div>
     <table class="admin-table" id="pinsTable">
       <thead><tr><th>Title</th><th>Type</th><th>Owner</th><th></th></tr></thead>
       <tbody></tbody>
@@ -207,8 +252,7 @@ document.getElementById('genBtn').addEventListener('click', async () => {
   }
 });
 
-async function loadPins(){
-  const rows = await fetch('/api/admin/pins').then(r => r.json());
+function renderPinsTable(rows){
   document.querySelector('#pinsTable tbody').innerHTML = rows.map(p => `
     <tr>
       <td>${p.title}</td>
@@ -223,8 +267,22 @@ async function loadPins(){
         <button class="btn-sm danger" onclick="deletePin(${p.id})">Delete pin</button>
       </td>
     </tr>
-  `).join('');
+  `).join('') || '<tr><td colspan="4" style="color:var(--muted)">No pins match that search.</td></tr>';
+}
+
+function filterPins(){
+  const q = (document.getElementById('pinsFilter').value || '').trim().toLowerCase();
+  const rows = window._pins || [];
+  const filtered = !q ? rows : rows.filter(p =>
+    (p.title || '').toLowerCase().includes(q) || (p.owner_email || '').toLowerCase().includes(q)
+  );
+  renderPinsTable(filtered);
+}
+
+async function loadPins(){
+  const rows = await fetch('/api/admin/pins').then(r => r.json());
   window._pins = rows;
+  filterPins();
   const adPinSel = document.getElementById('adLinkPin');
   if (adPinSel) adPinSel.innerHTML = '<option value="">Choose a pin…</option>' + pinOptionsHtml();
 }
@@ -652,10 +710,42 @@ async function loadChatMessages(){
   `).join('') || '<div style="color:var(--muted);font-size:13px">No messages.</div>';
 }
 
+async function loadStats(){
+  const s = await fetch('/api/admin/stats').then(r => r.json());
+  document.getElementById('statMessagesToday').textContent = s.messagesToday;
+  document.getElementById('statPendingCleaners').textContent = s.pendingCleaners;
+  document.getElementById('statUnclaimedCodes').textContent = s.unclaimedCodes;
+  document.getElementById('statBannedIps').textContent = s.bannedIps;
+  document.getElementById('statOpenCleaning').textContent = s.openCleaningRequests;
+  const byType = s.pinsByType || {};
+  const parts = Object.keys(byType).map(k => `${byType[k]} ${k}`);
+  document.getElementById('statPinsByType').textContent = parts.length ? `Pins: ${parts.join(', ')}` : 'No pins yet.';
+}
+
+const ACTIVITY_ACTION_LABELS = {
+  pause_owner: 'Paused owner', unpause_owner: 'Unpaused owner', edit_owner_email: 'Edited owner email',
+  delete_owner: 'Deleted owner', delete_pin: 'Deleted pin', generate_code: 'Generated code',
+  delete_code: 'Deleted code', kick_chat_name: 'Kicked chat name', ban_chat_name: 'Banned chat name',
+  ban_ip: 'Banned IP', unban_ip: 'Unbanned IP', set_cleaner_status: 'Set cleaner status', delete_cleaner: 'Deleted cleaner',
+};
+
+async function loadActivityLog(){
+  const rows = await fetch('/api/admin/activity-log').then(r => r.json());
+  document.getElementById('activityLogCount').textContent = rows.length ? `(${rows.length})` : '';
+  document.querySelector('#activityLogTable tbody').innerHTML = rows.map(r => `
+    <tr>
+      <td>${new Date(r.at).toLocaleString()}</td>
+      <td>${escHtml(r.adminEmail || '—')}</td>
+      <td>${escHtml(ACTIVITY_ACTION_LABELS[r.action] || r.action)}</td>
+      <td>${escHtml(r.detail || '')}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" style="color:var(--muted)">No admin actions logged yet.</td></tr>';
+}
+
 (async () => {
   if (await requireAdmin()) {
-    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits(); loadBannedIps(); loadVisitorLog(); loadCleaners();
-    setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisitorLog(); loadCleaners(); }, 10000);
+    loadCodes(); await loadPins(); loadAds(); loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisits(); loadStats(); loadBannedIps(); loadVisitorLog(); loadCleaners(); loadActivityLog();
+    setInterval(() => { loadChatNames(); loadChatMessages(); loadChatBanned(); loadVisitorLog(); loadCleaners(); loadStats(); loadActivityLog(); }, 10000);
   }
 })();
 </script>
