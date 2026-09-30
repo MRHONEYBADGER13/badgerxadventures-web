@@ -25,7 +25,7 @@
     </div>
   </div>
   <div class="admin-panel" style="grid-column:1 / -1">
-    <details id="visitorLogDetails" open>
+    <details id="visitorLogDetails">
       <summary class="panel-summary">Visitors (last 24 hours) <span id="visitorLogCount" style="color:var(--muted);font-weight:400"></span></summary>
       <p style="font-size:13px;color:var(--muted)">
         Everyone who's loaded the map page in the last day, with their IP address and rough
@@ -115,11 +115,13 @@
       "Ban IP" is stronger still -- it blocks that IP address from the entire site, not just chat,
       and survives them clearing cookies for a fresh name.
     </p>
-    <h4 style="margin-bottom:6px">Active names</h4>
-    <table class="admin-table" id="chatNamesTable">
-      <thead><tr><th>Name</th><th>Type</th><th>IP</th><th></th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
+    <details id="chatNamesDetails">
+      <summary class="sub-summary">Active names <span id="chatNamesCount" style="color:var(--muted);font-weight:400"></span></summary>
+      <table class="admin-table" id="chatNamesTable">
+        <thead><tr><th>Name</th><th>Type</th><th>IP</th><th></th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </details>
     <h4 style="margin:16px 0 6px">Kicked &amp; banned</h4>
     <table class="admin-table" id="chatBannedTable">
       <thead><tr><th>Name</th><th>Type</th><th>IP</th><th>Status</th><th></th></tr></thead>
@@ -477,6 +479,7 @@ function ipCell(ip, location){
 
 async function loadChatNames(){
   const rows = await fetch('/api/admin/chat/names').then(r => r.json());
+  document.getElementById('chatNamesCount').textContent = rows.length ? `(${rows.length})` : '';
   const tbody = document.querySelector('#chatNamesTable tbody');
   tbody.innerHTML = rows.map(n => `
     <tr>
