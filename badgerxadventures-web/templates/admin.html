@@ -7,7 +7,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand">BADGERxADVENTURES admin</div>
+  <div class="brand">BADGERxADVEN<span class="th">TU<svg class="badger-mark" viewBox="1 1.5 30 23" aria-hidden="true" focusable="false"><circle cx="7" cy="6.5" r="3.6" fill="#1B1B1B" stroke="currentColor" stroke-width="1"/><circle cx="25" cy="6.5" r="3.6" fill="#1B1B1B" stroke="currentColor" stroke-width="1"/><circle cx="6.6" cy="5.6" r="1.4" fill="#fff"/><circle cx="25.4" cy="5.6" r="1.4" fill="#fff"/><ellipse cx="16" cy="13.5" rx="11" ry="9.3" fill="#fff" stroke="currentColor" stroke-width="1"/><path d="M7 7.5C9.5 5.5 12 7 12.6 10L14 20.5C11 20.5 8 18 6.6 14 5.6 11 6 9 7 7.5z" fill="#1B1B1B"/><path d="M25 7.5C22.5 5.5 20 7 19.4 10L18 20.5C21 20.5 24 18 25.4 14 26.4 11 26 9 25 7.5z" fill="#1B1B1B"/><circle cx="10.6" cy="11.6" r="1" fill="#fff"/><circle cx="21.4" cy="11.6" r="1" fill="#fff"/><ellipse cx="16" cy="19.4" rx="2.3" ry="1.6" fill="#1B1B1B"/></svg></span>RES admin</div>
   <nav><a href="/">View map</a><a href="#" id="logout">Log out</a></nav>
 </header>
 <div class="admin-layout">
@@ -118,7 +118,7 @@
       private cabins.
     </p>
     <table class="admin-table" id="cleanersTable">
-      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Payouts</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Payouts</th><th>ID check</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -687,13 +687,20 @@ async function loadCleaners(){
       <td>${escHtml(c.phone || '')}</td>
       <td><span class="pill">${statusLabel[c.status] || c.status}</span></td>
       <td>${c.payoutsReady ? 'Ready' : '—'}</td>
+      <td style="display:flex;gap:4px;flex-wrap:wrap">
+        ${c.hasIdPhotos ? `
+          <a class="btn-sm" href="/api/admin/cleaners/${c.id}/id-photo/face" target="_blank" style="text-decoration:none;display:inline-block">Face</a>
+          <a class="btn-sm" href="/api/admin/cleaners/${c.id}/id-photo/front" target="_blank" style="text-decoration:none;display:inline-block">ID front</a>
+          <a class="btn-sm" href="/api/admin/cleaners/${c.id}/id-photo/back" target="_blank" style="text-decoration:none;display:inline-block">ID back</a>
+        ` : '<span style="color:var(--muted);font-size:12px">none on file</span>'}
+      </td>
       <td style="display:flex;gap:6px;flex-wrap:wrap">
         ${c.status !== 'approved' ? `<button class="btn-sm" data-act="approvecleaner" data-id="${c.id}">Approve</button>` : ''}
         ${c.status !== 'rejected' ? `<button class="btn-sm danger" data-act="rejectcleaner" data-id="${c.id}">Reject</button>` : ''}
         <button class="btn-sm danger" data-act="delcleaner" data-id="${c.id}">Delete</button>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="6" style="color:var(--muted)">No cleaner sign-ups yet.</td></tr>';
+  `).join('') || '<tr><td colspan="7" style="color:var(--muted)">No cleaner sign-ups yet.</td></tr>';
 }
 
 async function loadChatMessages(){
