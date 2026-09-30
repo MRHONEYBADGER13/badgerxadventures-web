@@ -211,11 +211,14 @@ async function loadPins(){
     <tr>
       <td>${p.title}</td>
       <td><span class="pill">${p.pin_type}</span></td>
-      <td>${p.owner_email || '(admin)'}</td>
+      <td>${p.owner_email ? escHtml(p.owner_email) : '(admin)'}${p.owner_id && p.owner_suspended ? ' <span style="color:#B3261E;font-weight:700">(paused)</span>' : ''}</td>
       <td>
         <button class="btn-sm" onclick="editPin(${p.id})">Edit</button>
         ${p.owner_id ? `<button class="btn-sm" onclick="sendOwnerReset(${p.owner_id}, this)">Reset password</button>` : ''}
-        <button class="btn-sm danger" onclick="deletePin(${p.id})">Delete</button>
+        ${p.owner_id ? `<button class="btn-sm" onclick="editOwnerEmail(${p.owner_id})">Edit email</button>` : ''}
+        ${p.owner_id ? `<button class="btn-sm" onclick="toggleOwnerSuspend(${p.owner_id}, ${p.owner_suspended ? 'true' : 'false'}, this)">${p.owner_suspended ? 'Unpause account' : 'Pause account'}</button>` : ''}
+        ${p.owner_id ? `<button class="btn-sm danger" onclick="deleteOwnerAccount(${p.owner_id})">Delete account</button>` : ''}
+        <button class="btn-sm danger" onclick="deletePin(${p.id})">Delete pin</button>
       </td>
     </tr>
   `).join('');
@@ -252,6 +255,55 @@ async function sendOwnerReset(ownerId, btn){
   } finally {
     btn.disabled = false;
     btn.textContent = original;
+  }
+}
+
+async function editOwnerEmail(ownerId){
+  const newEmail = prompt('New email address for this owner:');
+  if (newEmail === null) return;
+  const res = await fetch('/api/admin/owners/' + ownerId, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({email: newEmail})
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) {
+    loadPins();
+  } else {
+    alert(data.error || 'Could not update the email.');
+  }
+}
+
+async function toggleOwnerSuspend(ownerId, currentlySuspended, btn){
+  const verb = currentlySuspended ? 'unpause' : 'pause';
+  const msg = currentlySuspended
+    ? 'Unpause this account? They will be able to log in and use their account again, and their pin will reappear on the map.'
+    : 'Pause this account? They will not be able to log in or use their account, and their pin will be hidden from the map, until you unpause it.';
+  if (!confirm(msg)) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/admin/owners/' + ownerId, {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({suspended: !currentlySuspended})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      loadPins();
+    } else {
+      alert(data.error || ('Could not ' + verb + ' the account.'));
+    }
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteOwnerAccount(ownerId){
+  if (!confirm('Delete this owner\'s account? This removes their login AND their pin, permanently. This cannot be undone.')) return;
+  const res = await fetch('/api/admin/owners/' + ownerId, {method:'DELETE'});
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) {
+    loadPins();
+  } else {
+    alert(data.error || 'Could not delete the account.');
   }
 }
 
