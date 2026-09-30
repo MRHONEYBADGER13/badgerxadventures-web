@@ -28,6 +28,7 @@ from PIL import Image, ImageOps
 import db
 import auth
 import weather
+import geoip
 
 app = Flask(__name__)
 
@@ -834,6 +835,7 @@ def api_admin_visitor_log():
         "FROM visitor_log GROUP BY ip ORDER BY last_at DESC"
     ).fetchall()
     banned = {r["ip"] for r in conn.execute("SELECT ip FROM banned_ips").fetchall()}
+    locations = geoip.locate_many([r["ip"] for r in rows])
     return jsonify([
         {
             "ip": r["ip"],
@@ -841,6 +843,7 @@ def api_admin_visitor_log():
             "firstAt": _to_ms(r["first_at"]),
             "lastAt": _to_ms(r["last_at"]),
             "banned": r["ip"] in banned,
+            "location": locations.get(r["ip"]),
         }
         for r in rows
     ])
@@ -1705,13 +1708,15 @@ def api_admin_chat_names():
         "SELECT p.title AS name, p.owner_id FROM pins p "
         "WHERE p.pin_type IN ('business','stay') AND p.owner_id IS NOT NULL AND p.title != ''"
     ).fetchall()
+    locations = geoip.locate_many([r["ip"] for r in guests])
     out = []
     for r in guests:
         out.append({"name": r["name"], "kind": "guest", "ip": r["ip"],
+                     "location": locations.get(r["ip"]),
                      "banned": chat_is_banned(conn, r["session_id"], None),
                      "expires_at": r["expires_at"]})
     for r in owners_rows:
-        out.append({"name": r["name"], "kind": "owner", "ip": None,
+        out.append({"name": r["name"], "kind": "owner", "ip": None, "location": None,
                      "banned": chat_is_banned(conn, None, r["owner_id"]),
                      "expires_at": None})
     return jsonify(out)
@@ -1799,11 +1804,13 @@ def api_admin_chat_banned():
     rows = conn.execute(
         "SELECT name, name_lower, owner_id, ip, created_at, expires_at FROM chat_bans ORDER BY created_at DESC"
     ).fetchall()
+    locations = geoip.locate_many([r["ip"] for r in rows])
     return jsonify([
         {
             "name": r["name"] or r["name_lower"],
             "kind": "owner" if r["owner_id"] else "guest",
             "ip": r["ip"],
+            "location": locations.get(r["ip"]),
             "at": _to_ms(r["created_at"]),
             "until": _to_ms(r["expires_at"]) if r["expires_at"] else None,
         }
@@ -1855,7 +1862,11 @@ def api_admin_banned_ips_list():
     rows = get_db().execute(
         "SELECT ip, label, created_at FROM banned_ips ORDER BY created_at DESC"
     ).fetchall()
-    return jsonify([{"ip": r["ip"], "label": r["label"], "at": _to_ms(r["created_at"])} for r in rows])
+    locations = geoip.locate_many([r["ip"] for r in rows])
+    return jsonify([
+        {"ip": r["ip"], "label": r["label"], "at": _to_ms(r["created_at"]), "location": locations.get(r["ip"])}
+        for r in rows
+    ])
 
 @app.route("/api/admin/banned-ips", methods=["POST"])
 @admin_required
