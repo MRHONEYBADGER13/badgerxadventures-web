@@ -60,6 +60,11 @@ def _migrate(conn):
         conn.execute("ALTER TABLE owners ADD COLUMN stripe_customer_id TEXT")
     if "stripe_payment_method_id" not in owner_cols:
         conn.execute("ALTER TABLE owners ADD COLUMN stripe_payment_method_id TEXT")
+    # An admin "pause": blocks the owner from logging in or using their
+    # account, and hides their pin from the public map -- both reversible
+    # the moment an admin flips this back off.
+    if "suspended" not in owner_cols:
+        conn.execute("ALTER TABLE owners ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0")
 
 
 def row_to_dict(row):
