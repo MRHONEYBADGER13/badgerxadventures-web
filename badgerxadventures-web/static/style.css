@@ -8,7 +8,9 @@
 body { margin: 0; background: var(--bg); color: var(--ink); }
 a { color: inherit; }
 header.top { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
-header.top .brand { font-weight: 800; letter-spacing: .02em; }
+header.top .brand { font-weight: 800; letter-spacing: .02em; padding-bottom: 20px; }
+header.top .brand .th { position: relative; display: inline-block; }
+header.top .brand .badger-mark { position: absolute; top: calc(100% - 1px); left: 50%; transform: translateX(-50%); width: 1.6em; height: 1.2em; pointer-events: none; overflow: visible; }
 header.top nav a { margin-left: 14px; font-size: 14px; text-decoration: none; color: var(--muted); }
 header.top nav a.primary { background: var(--accent); color: var(--accent-ink); padding: 7px 12px; border-radius: 8px; }
 
