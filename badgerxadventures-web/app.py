@@ -147,6 +147,13 @@ _RENDER_DISK_DIR = "/opt/render/project/src/instance"
 _DATA_DIR = _RENDER_DISK_DIR if os.path.isdir(_RENDER_DISK_DIR) else os.path.join(os.path.dirname(__file__), "instance")
 UPLOAD_DIR = os.path.join(_DATA_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+# Cleaner ID-verification photos (face + both sides of a photo ID) -- kept in
+# a separate directory from UPLOAD_DIR on purpose: UPLOAD_DIR is served
+# publicly at /static/uploads/<name> with no auth check, which is fine for
+# pin photos and ad images but never okay for someone's ID. Nothing in
+# ID_VERIFY_DIR is reachable except through the admin-only route below.
+ID_VERIFY_DIR = os.path.join(_DATA_DIR, "id_verification")
+os.makedirs(ID_VERIFY_DIR, exist_ok=True)
 MAX_PHOTOS_BY_TYPE = {"business": 3, "custom": 3, "stay": 5}
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024  # 12MB raw upload cap per file, before we resize down
 
@@ -845,6 +852,19 @@ def _save_photo(file_storage):
     name = f"{uuid.uuid4().hex}.jpg"
     img.save(os.path.join(UPLOAD_DIR, name), "JPEG", quality=82)
     return f"/static/uploads/{name}"
+
+
+def _save_id_photo(file_storage):
+    """Same processing as _save_photo, but into ID_VERIFY_DIR (private) and
+    returning a bare filename rather than a public URL -- these never get
+    a /static/uploads/ path."""
+    img = Image.open(file_storage.stream)
+    img = ImageOps.exif_transpose(img)
+    img = img.convert("RGB")
+    img.thumbnail((1600, 1600))
+    name = f"{uuid.uuid4().hex}.jpg"
+    img.save(os.path.join(ID_VERIFY_DIR, name), "JPEG", quality=88)
+    return name
 
 
 def _add_photo(conn, pin, file):
@@ -2245,20 +2265,53 @@ def cleaning_request_to_dict(conn, row, include_bids=False):
 
 @app.route("/api/cleaner/signup", methods=["POST"])
 def api_cleaner_signup():
-    data = request.get_json(force=True) or {}
-    name = (data.get("name") or "").strip()
-    email = (data.get("email") or "").strip().lower()
-    phone = (data.get("phone") or "").strip()
-    password = data.get("password") or ""
+    # multipart/form-data, not JSON -- signing up also means uploading the
+    # 3 ID-check photos below, so the whole thing travels in one request.
+    name = (request.form.get("name") or "").strip()
+    email = (request.form.get("email") or "").strip().lower()
+    phone = (request.form.get("phone") or "").strip()
+    password = request.form.get("password") or ""
     if not name or not email or len(password) < 8:
         return jsonify({"error": "Enter your name, an email, and a password (8+ characters)."}), 400
     conn = get_db()
     if conn.execute("SELECT 1 FROM cleaners WHERE email = ?", (email,)).fetchone():
         return jsonify({"error": "That email already has a cleaner account."}), 409
+
+    # A quick ID check before an account can bid on jobs that put them
+    # inside someone's cabin: a photo of their face, plus both sides of a
+    # photo ID. All three are required -- nothing here is optional. Presence
+    # is checked for all three before any file is actually written to disk,
+    # so a signup that's missing one photo never leaves the other two
+    # orphaned in ID_VERIFY_DIR.
+    id_fields = (
+        ("id_face", "a clear photo of your face"),
+        ("id_front", "the front of your photo ID"),
+        ("id_back", "the back of your photo ID"),
+    )
+    id_files = {}
+    for field, label in id_fields:
+        file = request.files.get(field)
+        if not file or not file.filename or not (file.content_type or "").startswith("image/"):
+            return jsonify({"error": f"Please upload {label}."}), 400
+        id_files[field] = file
+
+    id_paths = {}
+    for field, label in id_fields:
+        try:
+            id_paths[field] = _save_id_photo(id_files[field])
+        except Exception:
+            # Roll back any of the three already written this request.
+            for saved_name in id_paths.values():
+                fpath = os.path.join(ID_VERIFY_DIR, saved_name)
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+            return jsonify({"error": f"Couldn't read the image for {label}."}), 400
+
     pw_hash = auth.hash_password(password)
     cur = conn.execute(
-        "INSERT INTO cleaners (name, email, phone, password_hash) VALUES (?, ?, ?, ?)",
-        (name, email, phone, pw_hash),
+        "INSERT INTO cleaners (name, email, phone, password_hash, id_face_path, id_front_path, id_back_path) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (name, email, phone, pw_hash, id_paths["id_face"], id_paths["id_front"], id_paths["id_back"]),
     )
     conn.commit()
 
@@ -2709,10 +2762,25 @@ def api_admin_cleaners_list():
         {
             "id": r["id"], "name": r["name"], "email": r["email"], "phone": r["phone"],
             "status": r["status"], "payoutsReady": bool(r["stripe_payouts_ready"]),
+            "hasIdPhotos": bool(r["id_face_path"] or r["id_front_path"] or r["id_back_path"]),
             "createdAt": _to_ms(r["created_at"]),
         }
         for r in rows
     ])
+
+
+@app.route("/api/admin/cleaners/<int:cleaner_id>/id-photo/<which>", methods=["GET"])
+@admin_required
+def api_admin_cleaner_id_photo(cleaner_id, which):
+    """Serves one of a cleaner's 3 ID-check photos -- admin-only, and the
+    only way any of these files are ever reachable (see ID_VERIFY_DIR)."""
+    col = {"face": "id_face_path", "front": "id_front_path", "back": "id_back_path"}.get(which)
+    if not col:
+        return jsonify({"error": "Not found."}), 404
+    row = get_db().execute(f"SELECT {col} AS path FROM cleaners WHERE id = ?", (cleaner_id,)).fetchone()
+    if not row or not row["path"]:
+        return jsonify({"error": "Not found."}), 404
+    return send_from_directory(ID_VERIFY_DIR, row["path"])
 
 
 @app.route("/api/admin/cleaners/<int:cleaner_id>/status", methods=["POST"])
@@ -2735,11 +2803,21 @@ def api_admin_cleaners_set_status(cleaner_id):
 @admin_required
 def api_admin_cleaners_delete(cleaner_id):
     conn = get_db()
-    cleaner = conn.execute("SELECT email FROM cleaners WHERE id = ?", (cleaner_id,)).fetchone()
+    cleaner = conn.execute(
+        "SELECT email, id_face_path, id_front_path, id_back_path FROM cleaners WHERE id = ?", (cleaner_id,)
+    ).fetchone()
     conn.execute("DELETE FROM cleaners WHERE id = ?", (cleaner_id,))
     conn.commit()
     if cleaner:
         log_admin_action("delete_cleaner", cleaner["email"])
+        # These are ID documents, not casual pin photos -- actually remove
+        # them from disk once the account (and any reason to keep them) is gone.
+        for col in ("id_face_path", "id_front_path", "id_back_path"):
+            path = cleaner[col]
+            if path:
+                fpath = os.path.join(ID_VERIFY_DIR, os.path.basename(path))
+                if os.path.exists(fpath):
+                    os.remove(fpath)
     return jsonify({"ok": True})
 
 
