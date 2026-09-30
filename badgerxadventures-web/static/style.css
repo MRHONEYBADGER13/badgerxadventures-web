@@ -38,6 +38,11 @@ svg#map { width: 100%; height: 100%; display: block; }
 .error-msg { color: #B3261E; font-size: 13px; margin-top: 10px; }
 .ok-msg { color: #146C43; font-size: 13px; margin-top: 10px; }
 
+.pw-field { position: relative; }
+.pw-field input { padding-right: 38px; }
+.pw-field .pw-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: auto; margin-top: 0; border: 0; background: none; padding: 6px; cursor: pointer; color: var(--muted); display: flex; align-items: center; border-radius: 6px; }
+.pw-field .pw-toggle:hover { color: var(--ink); background: var(--bg); }
+
 .dash-layout { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 56px); }
 .dash-form { padding: 20px; overflow-y: auto; border-right: 1px solid var(--line); background: var(--card); }
 .dash-form label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 4px; }
