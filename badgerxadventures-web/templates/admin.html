@@ -25,16 +25,18 @@
     </div>
   </div>
   <div class="admin-panel" style="grid-column:1 / -1">
-    <h3>Visitors (last 24 hours)</h3>
-    <p style="font-size:13px;color:var(--muted);margin-top:0">
-      Everyone who's loaded the map page in the last day, with their IP address. This list
-      clears itself after 24 hours -- ban an IP here to block it from the whole site right
-      away (same list as Banned IPs, below, under Lake Chat).
-    </p>
-    <table class="admin-table" id="visitorLogTable">
-      <thead><tr><th>IP</th><th>Visits</th><th>Last seen</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
+    <details id="visitorLogDetails">
+      <summary class="panel-summary">Visitors (last 24 hours) <span id="visitorLogCount" style="color:var(--muted);font-weight:400"></span></summary>
+      <p style="font-size:13px;color:var(--muted)">
+        Everyone who's loaded the map page in the last day, with their IP address and rough
+        location. This list clears itself after 24 hours -- ban an IP here to block it from the
+        whole site right away (same list as Banned IPs, below, under Lake Chat).
+      </p>
+      <table class="admin-table" id="visitorLogTable">
+        <thead><tr><th>IP</th><th>Visits</th><th>Last seen</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </details>
   </div>
   <div class="admin-panel">
     <h3>Invite codes</h3>
@@ -155,10 +157,12 @@ async function loadVisits(){
 
 async function loadVisitorLog(){
   const rows = await fetch('/api/admin/visitor-log').then(r => r.json());
+  document.getElementById('visitorLogCount').textContent =
+    rows.length ? `(${rows.length})` : '';
   const tbody = document.querySelector('#visitorLogTable tbody');
   tbody.innerHTML = rows.map(v => `
     <tr>
-      <td>${ipCell(v.ip)}</td>
+      <td>${ipCell(v.ip, v.location)}</td>
       <td>${v.hits}</td>
       <td>${new Date(v.lastAt).toLocaleString()}</td>
       <td>
@@ -413,8 +417,10 @@ function escHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-function ipCell(ip){
-  return ip ? `<code style="font-size:12px">${escHtml(ip)}</code>` : '<span style="color:var(--muted)">—</span>';
+function ipCell(ip, location){
+  if (!ip) return '<span style="color:var(--muted)">—</span>';
+  const loc = location ? ` <span style="color:var(--muted)">· ${escHtml(location)}</span>` : '';
+  return `<code style="font-size:12px">${escHtml(ip)}</code>${loc}`;
 }
 
 async function loadChatNames(){
@@ -424,7 +430,7 @@ async function loadChatNames(){
     <tr>
       <td>${escHtml(n.name)}</td>
       <td><span class="pill">${escHtml(n.kind)}</span></td>
-      <td>${ipCell(n.ip)}</td>
+      <td>${ipCell(n.ip, n.location)}</td>
       <td>${n.banned ? '<span style="color:#B3261E;font-weight:700">banned</span>' : ''}</td>
       <td>
         ${n.banned
@@ -453,7 +459,7 @@ async function loadChatBanned(){
       <tr>
         <td>${escHtml(b.name)}</td>
         <td><span class="pill">${escHtml(b.kind)}</span></td>
-        <td>${ipCell(b.ip)}</td>
+        <td>${ipCell(b.ip, b.location)}</td>
         <td>${escHtml(status)}</td>
         <td>
           <button class="btn-sm" data-act="unban" data-name="${escHtml(b.name)}">Add back</button>
@@ -469,7 +475,7 @@ async function loadBannedIps(){
   const tbody = document.querySelector('#bannedIpsTable tbody');
   tbody.innerHTML = rows.map(b => `
     <tr>
-      <td><code style="font-size:12px">${escHtml(b.ip)}</code></td>
+      <td>${ipCell(b.ip, b.location)}</td>
       <td>${escHtml(b.label || '')}</td>
       <td>${new Date(b.at).toLocaleDateString()}</td>
       <td><button class="btn-sm" data-act="unbanip" data-ip="${escHtml(b.ip)}">Unban</button></td>
