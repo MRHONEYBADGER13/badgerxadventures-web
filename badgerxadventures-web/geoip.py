@@ -12,7 +12,7 @@ import json
 import urllib.error
 import urllib.request
 
-USER_AGENT = "BADGERxADVENTURES/1.0 (contact: mrxbadger6@yahoo.com)"
+USER_AGENT = "LAKExCUMBERLAND/1.0 (contact: mrxbadger6@yahoo.com)"
 
 _cache = {}  # ip -> label string, or "" for "looked up, nothing useful found"
 
