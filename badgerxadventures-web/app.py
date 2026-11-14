@@ -1,4 +1,4 @@
-"""BADGERxADVENTURES listings app.
+"""LAKExCUMBERLAND listings app.
 
 Flask + SQLite, serving the full themed Lake Cumberland map (illustrated
 USGS-based shoreline, the badger jet-ski game, and a live NWS weather strip)
@@ -55,7 +55,7 @@ SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
 # bidding) works fine before Stripe is ever configured.
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY")
-CLEAN_COMMISSION_PCT = 15  # BADGERxADVENTURES' cut of every accepted cleaning bid; cleaner keeps the rest
+CLEAN_COMMISSION_PCT = 15  # LAKExCUMBERLAND' cut of every accepted cleaning bid; cleaner keeps the rest
 try:
     import stripe as _stripe
     if STRIPE_SECRET_KEY:
@@ -97,7 +97,7 @@ def _maintenance_gate():
     if request.path.startswith("/static/") or request.path.startswith("/.well-known/"):
         return None
     if request.path.startswith("/api/"):
-        return jsonify({"error": "BadgerXAdventures is temporarily down for an update. Check back soon!"}), 503
+        return jsonify({"error": "LakeXCumberland is temporarily down for an update. Check back soon!"}), 503
     return render_template("maintenance.html"), 503
 
 
@@ -234,7 +234,7 @@ _IP_BAN_EXEMPT_PREFIXES = ("/admin", "/api/admin", "/static")
 _IP_BLOCKED_PAGE = (
     "<!doctype html><html><body style=\"font-family:sans-serif;padding:40px;"
     "text-align:center;color:#4A7282\"><h2>Access blocked</h2>"
-    "<p>This device has been blocked from BADGERxADVENTURES.</p></body></html>"
+    "<p>This device has been blocked from LAKExCUMBERLAND.</p></body></html>"
 )
 
 
@@ -662,7 +662,7 @@ def api_redeem():
     conn.commit()
 
     notify_admins(
-        "New pin signup on BADGERxADVENTURES",
+        "New pin signup on LAKExCUMBERLAND",
         f"{email} just redeemed invite code {code} ({row['pin_type']}"
         + (f", \"{row['label']}\"" if row["label"] else "")
         + ").\n\nThey can now place their pin on the map.",
@@ -717,15 +717,15 @@ def api_forgot_password():
             body = (
                 "Hi,\n\n"
                 "Someone (hopefully you) asked to reset the password for your "
-                f"BADGERxADVENTURES account ({owner['email']}).\n\n"
+                f"LAKExCUMBERLAND account ({owner['email']}).\n\n"
                 f"Set a new password here:\n{reset_url}\n\n"
                 "This link expires in 2 hours and works only once. If you weren't "
                 "expecting this, you can ignore this email -- your password won't "
                 "change unless you click the link and set a new one.\n\n"
-                "-- BADGERxADVENTURES"
+                "-- LAKExCUMBERLAND"
             )
             try:
-                send_email(owner["email"], "Reset your BADGERxADVENTURES password", body)
+                send_email(owner["email"], "Reset your LAKExCUMBERLAND password", body)
             except Exception as e:
                 # Still answer the client with a plain {"ok": true} either way
                 # (see the docstring above) -- but log the real reason here so
@@ -1326,16 +1326,16 @@ def api_admin_owners_send_reset(owner_id):
     reset_url = request.host_url.rstrip("/") + "/reset-password?token=" + token
     body = (
         "Hi,\n\n"
-        "An admin at BADGERxADVENTURES started a password reset for your account "
+        "An admin at LAKExCUMBERLAND started a password reset for your account "
         f"({owner['email']}).\n\n"
         f"Set a new password here:\n{reset_url}\n\n"
         "This link expires in 2 hours and works only once. If you weren't expecting "
         "this, you can ignore this email -- your password won't change unless you "
         "click the link and set a new one.\n\n"
-        "-- BADGERxADVENTURES"
+        "-- LAKExCUMBERLAND"
     )
     try:
-        send_email(owner["email"], "Reset your BADGERxADVENTURES password", body)
+        send_email(owner["email"], "Reset your LAKExCUMBERLAND password", body)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
@@ -2316,7 +2316,7 @@ def api_cleaner_signup():
     conn.commit()
 
     notify_admins(
-        "New cleaner signup on BADGERxADVENTURES",
+        "New cleaner signup on LAKExCUMBERLAND",
         f"{name} ({email}) just signed up to bid on cabin cleaning jobs. "
         "They can't see or bid on anything until you approve them in the admin panel.",
     )
