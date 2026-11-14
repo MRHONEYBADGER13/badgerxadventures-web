@@ -1,4 +1,4 @@
--- BADGERxADVENTURES listings app — database schema.
+-- LAKExCUMBERLAND listings app — database schema.
 -- Written in plain, portable SQL (works on SQLite as shipped here; the same
 -- statements run on Postgres/MySQL with only trivial type tweaks, noted below,
 -- if this ever needs to move to a bigger database later).
