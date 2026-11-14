@@ -1,5 +1,5 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>BADGERxADVENTURES</title>
+<title>LAKExCUMBERLAND</title>
 <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 <meta name="theme-color" content="#E5533D">
 <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}" type="image/png">
@@ -128,9 +128,12 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:-.01em;text-wrap:bal
 .mark svg{width:22px;height:22px}
 .brand h1{font-size:21px;font-weight:800;line-height:1.05;color:var(--head)}
 .brand small{display:block;color:var(--head-sub);font-size:12px;margin-top:2px;max-width:146px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lockup{padding-bottom:32px}
+.lockup{padding-bottom:64px}
 .th{position:relative;display:inline-block}
 .badger{position:absolute;top:calc(100% - 2px);left:50%;transform:translateX(-50%);width:1.7em;height:1.3em;pointer-events:none;overflow:visible}
+.x-mark{position:relative;display:inline-block;color:var(--accent);font-size:1.1em}
+.trail{position:absolute;top:calc(100% + 2px);left:50%;transform:translateX(-66%);width:74px;height:24px;pointer-events:none;overflow:visible}
+.x-caption{position:absolute;top:calc(100% + 23px);left:50%;transform:translateX(-62%);font-size:10px;font-weight:500;font-style:italic;letter-spacing:.03em;color:#8a6d3b;white-space:nowrap}
 .spacer{flex:1}
 .viewer{display:flex;align-items:center;gap:8px;padding:4px 12px 4px 4px;border:1px solid var(--line);border-radius:999px;background:var(--card);font-size:12.5px;max-width:100%}
 .viewer img{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--field)}
@@ -458,7 +461,7 @@ a.btn{color:var(--ink);text-decoration:none}
   .spacer{display:none}
   .brand{order:1;flex:1 1 220px}
   .brand h1{font-size:16px;white-space:nowrap}
-  .lockup{padding-bottom:26px}
+  .lockup{padding-bottom:58px}
   .mark{width:32px;height:32px;border-radius:10px}
   .mark svg{width:20px;height:20px}
   .viewer{order:3}
@@ -578,10 +581,10 @@ a.btn{color:var(--ink);text-decoration:none}
   </defs>
 </svg>
 
-<div id="splash" role="dialog" aria-modal="true" aria-label="BADGERxADVENTURES is loading">
+<div id="splash" role="dialog" aria-modal="true" aria-label="LAKExCUMBERLAND is loading">
   <div class="sp-sky"></div>
   <div class="sp-water"></div>
-  <div class="sp-main"><h2 class="sp-title" id="sptitle">BADGERxADVENTURES</h2></div>
+  <div class="sp-main"><h2 class="sp-title" id="sptitle">LAKExCUMBERLAND</h2></div>
   <div class="sp-bottom">
     <p class="sp-line" id="spline">Waking the badger&hellip;</p>
     <div class="sp-track" id="sptrack" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
@@ -678,11 +681,12 @@ a.btn{color:var(--ink);text-decoration:none}
     snd = null;
   }
   function build(){
-    var T = 'BADGERxADVENTURES', h = $('sptitle'), tu = null;
+    var T = 'LAKExCUMBERLAND', h = $('sptitle'), tu = null;
     h.textContent = '';
     for (var i = 0; i < T.length; i++){
       var sp = document.createElement('span'); sp.className = 'sp-l'; sp.style.setProperty('--i', i); sp.textContent = T.charAt(i);
-      if (i === 12 || i === 13){
+      if (i === 4){ sp.style.color = 'var(--accent)'; }
+      if (i === 11 || i === 12){
         if (!tu){ tu = document.createElement('span'); tu.className = 'th'; h.appendChild(tu); }
         tu.appendChild(sp);
       } else { h.appendChild(sp); }
@@ -760,7 +764,7 @@ a.btn{color:var(--ink);text-decoration:none}
   <header class="top">
     <div class="brand">
       <div class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.400-6.500 11-6.500 11z"/><path d="M8.500 10.500c1 -1 2 -1 3.500 0s2.500 1 3.500 0"/></svg></div>
-      <div class="lockup"><h1>BADGERxADVEN<span class="th">TU<svg class="badger" viewBox="1 1.5 30 23" role="button" tabindex="0" aria-label="Play the badger jet ski game" focusable="false"><rect x="-1" y="0" width="34" height="27" fill="transparent" pointer-events="all"/><circle cx="7" cy="6.5" r="3.6" fill="#1B1B1B" stroke="currentColor" stroke-width="1"/><circle cx="25" cy="6.5" r="3.6" fill="#1B1B1B" stroke="currentColor" stroke-width="1"/><circle cx="6.6" cy="5.6" r="1.4" fill="#fff"/><circle cx="25.4" cy="5.6" r="1.4" fill="#fff"/><ellipse cx="16" cy="13.5" rx="11" ry="9.3" fill="#fff" stroke="currentColor" stroke-width="1"/><path d="M7 7.5C9.5 5.5 12 7 12.6 10L14 20.5C11 20.5 8 18 6.6 14 5.6 11 6 9 7 7.5z" fill="#1B1B1B"/><path d="M25 7.5C22.5 5.5 20 7 19.4 10L18 20.5C21 20.5 24 18 25.4 14 26.4 11 26 9 25 7.5z" fill="#1B1B1B"/><circle cx="10.6" cy="11.6" r="1" fill="#fff"/><circle cx="21.4" cy="11.6" r="1" fill="#fff"/><ellipse cx="16" cy="19.4" rx="2.3" ry="1.6" fill="#1B1B1B"/></svg></span>RES</h1><small id="stats">Community map</small></div>
+      <div class="lockup"><h1>LAKE<span class="x-mark">X<svg class="trail" viewBox="0 0 74 24" aria-hidden="true" focusable="false"><path d="M6 20 Q 24 23 34 14 T 61 1" fill="none" stroke="#8a6d3b" stroke-width="1.5" stroke-dasharray="0.5 4.5" stroke-linecap="round"/></svg><span class="x-caption">x marks the spot</span></span>CUMBER<span class="th">LA<svg class="badger" viewBox="1 1.5 30 23" role="button" tabindex="0" aria-label="Play the badger jet ski game" focusable="false"><rect x="-1" y="0" width="34" height="27" fill="transparent" pointer-events="all"/><circle cx="7" cy="6.5" r="3.6" fill="#1B1B1B" stroke="currentColor" stroke-width="1"/><circle cx="25" cy="6.5" r="3.6" fill="#1B1B1B" stroke="currentColor" stroke-width="1"/><circle cx="6.6" cy="5.6" r="1.4" fill="#fff"/><circle cx="25.4" cy="5.6" r="1.4" fill="#fff"/><ellipse cx="16" cy="13.5" rx="11" ry="9.3" fill="#fff" stroke="currentColor" stroke-width="1"/><path d="M7 7.5C9.5 5.5 12 7 12.6 10L14 20.5C11 20.5 8 18 6.6 14 5.6 11 6 9 7 7.5z" fill="#1B1B1B"/><path d="M25 7.5C22.5 5.5 20 7 19.4 10L18 20.5C21 20.5 24 18 25.4 14 26.4 11 26 9 25 7.5z" fill="#1B1B1B"/><circle cx="10.6" cy="11.6" r="1" fill="#fff"/><circle cx="21.4" cy="11.6" r="1" fill="#fff"/><ellipse cx="16" cy="19.4" rx="2.3" ry="1.6" fill="#1B1B1B"/></svg></span>ND</h1><small id="stats">Community map</small></div>
     </div>
     <div class="spacer"></div>
     <div class="lakechat-row">
