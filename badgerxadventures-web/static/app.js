@@ -13462,7 +13462,7 @@
           ? ROLE.hasPin
             ? "Your pin is live"
             : "Signed in \u2014 place your pin"
-          : "Browsing \u2014 get a code to list your business or stay \u2014 email us at BADGERxADVENTURES@gmail.com";
+          : "Browsing \u2014 get a code to list your business or stay \u2014 email us at info@lakexcumberland.com";
     box.title = label;
     box.append(
       h("i", { class: "dot" + (ROLE.kind === "guest" ? " off" : "") }),
@@ -17778,7 +17778,7 @@
     overlay.innerHTML =
       '<div class="lc-warn-card" data-id="' + w.id + '" role="alertdialog" aria-modal="true">' +
       '<svg viewBox="0 0 24 24" fill="none" stroke="#B3261E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 22.4 21H1.6z"/><line x1="12" y1="9.5" x2="12" y2="14.3"/><circle cx="12" cy="17.6" r=".9" fill="#B3261E" stroke="none"/></svg>' +
-      '<h2>A message from BADGERxADVENTURES</h2>' +
+      '<h2>A message from LAKExCUMBERLAND</h2>' +
       count +
       '<div class="lc-warn-msg">' + lcEscape(w.text) + '</div>' +
       '<button type="button" class="btn primary" data-ack="' + w.id + '">I Understand, Continue</button>' +
