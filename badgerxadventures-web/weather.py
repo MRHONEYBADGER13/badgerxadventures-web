@@ -32,7 +32,7 @@ import json
 
 CACHE_TTL = 20 * 60  # 20 minutes
 STATION = "KSME"  # Somerset-Pulaski County Airport
-USER_AGENT = "BADGERxADVENTURES/1.0 (contact: mrxbadger6@yahoo.com)"
+USER_AGENT = "LAKExCUMBERLAND/1.0 (contact: mrxbadger6@yahoo.com)"
 
 LAKE_GAUGE = "WLCK2"  # NWS AHPS gauge: Cumberland River at Lake Cumberland (Wolf Creek Dam)
 LAKE_FULL_POOL_FT = 723.0  # published full/summer pool elevation, Lake Cumberland
